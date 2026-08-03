@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+
+# 파이프라인 산출물 (대용량 오디오·모델)
+data/
+*.wav
+*.opus
+*.mp3
+*.flac
+*.m4a
+
+# 모델 캐시
+.cache/
+models/
+
+# 환경
+.env
+.env.local
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 평가 산출물
+eval/out/
