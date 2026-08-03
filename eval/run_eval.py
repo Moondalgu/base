@@ -95,7 +95,13 @@ def main() -> int:
     print(f"  비트 F-measure : {beat_metrics['f']:.3f}")
     print(f"  BPM            : 정답 {truth['bpm']} / 추정 {manifest['tempo']['medianBpm']}")
     print(f"  마디            : 정답 {truth['bars']} / 추정 {manifest['barCount']}")
-    print(f"  양자화 잔차     : {manifest['quality']['components']['quantizationResidual']}")
+
+    quality = manifest.get("quality", {})
+    if "score" in quality:
+        # components는 0~1로 정규화된 점수다(높을수록 좋음). 원시 잔차가 아니다.
+        print(f"  품질 점수       : {quality['score']} ({quality.get('level')})")
+        for key, value in quality.get("components", {}).items():
+            print(f"    {key:26s} {value}")
 
     target = 0.75
     ok = metrics["f1"] >= target
@@ -155,14 +161,21 @@ def _notes_from_alphatex(tex: str, manifest: dict, grid) -> list[tuple[float, in
 
 
 def _phase_from_manifest(manifest: dict, grid) -> int:
-    """manifest에 phase를 남기지 않았으므로 다운비트에서 재계산한다."""
+    """파이프라인이 실제로 쓴 위상을 manifest에서 읽는다.
+
+    이 값을 추측하면 안 된다. 파이프라인은 첫 음 기준으로 다운비트 위상을
+    교정하는데(quantize.choose_phase), 여기서 0으로 가정하면 마디 시각이
+    통째로 밀려서 평가 결과가 실제보다 나쁘게 나온다.
+    """
+    if "phase" in manifest:
+        return int(manifest["phase"])
+    # 구버전 manifest 호환 — 다운비트에서 근사한다
     beats = grid.beats
-    bpb = grid.beats_per_bar
-    if not grid.downbeats:
+    if not grid.downbeats or not beats:
         return 0
-    # run_pipeline이 첫 음 기준으로 교정하므로 여기서도 같은 규칙이 필요하다.
-    # 정확한 재현을 위해 manifest에 phase를 기록하도록 개선 예정.
-    return 0
+    first = grid.downbeats[0]
+    idx = min(range(len(beats)), key=lambda i: abs(beats[i] - first))
+    return idx % grid.beats_per_bar
 
 
 def _beat_f_measure(beats: list[float], truth: dict, tolerance: float = 0.07) -> dict:

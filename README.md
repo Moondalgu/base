@@ -6,96 +6,113 @@
 개인 학습·연습 목적. 상업화 계획 없음.
 
 - 기획: [PRD.md](./PRD.md)
-- 실측 확인된 라이브러리 API와 설치 이슈: PRD 부록 A
+- 실측 확인된 라이브러리 API와 설치 함정: PRD 부록 A
 
-## 현재 상태
+## 상태
 
 | 마일스톤 | 내용 | 상태 |
 |---|---|---|
-| M0 | 파이프라인 관통 (CLI) | **완료** |
-| M1 | 오디오 엔진 (8채널 스트레처 + 스템 믹서) | 다음 |
-| M2 | alphaTab 악보 + 커서 동기화 | 대기 |
-| M3 | 웹 파이프라인 (FastAPI + SSE) | 대기 |
-| M4 | 품질 게이트 + 골든셋 평가 | 부분 (eval 도구 완성) |
+| M0 | 파이프라인 관통 (CLI) | 완료 |
+| M1 | 오디오 엔진 + 스템 믹서 | 완료 |
+| M2 | alphaTab 악보 + 커서 동기화 | 완료 |
+| M3 | 웹 파이프라인 (FastAPI + SSE) | 완료 |
+| M4 | 품질 게이트 + 평가 도구 | 완료 |
 
-### M0 결과
+실시간 재생 체감(배속이 자연스러운지, 게인 조작에 클릭 노이즈가 없는지)은
+헤드리스 브라우저로 검증할 수 없어 사람이 직접 들어봐야 한다.
 
-합성 픽스처(120BPM 4/4 8마디, 정답 30음)로 전 구간 관통 + 정량 평가.
+## 실행
 
-```
-$ python scripts/run_pipeline.py data/_fixture/bass_only.wav \
-      --skip-separate --beat-source data/_fixture/mix.wav
+```bash
+# 워커 (파이프라인)
+cd apps/worker
+../../.venv/Scripts/python -m uvicorn main:app --port 8000
 
-[transcribe] 60 note events
-[bassclean]  60 -> 29  (배음 25, 겹침 3, 병합 3)
-[quantize]   29 -> 28 in 8 bars, 4/4, phase=0 (다운비트 위상 교정됨), 잔차 0.113
-[fretting]   standard [43,38,33,28]: 28 notes, 연주불가 0
-
-   G ||----------------|----------------|----------------|----------------|
-   D ||----------------|----------------|----------------|0---------------|
-   A ||------------00--|0---0---2---3---|------------0---|----3---2---0---|
-   E ||0-------3-------|----------------|0-------3-------|----------------|
+# 웹
+cd apps/web
+npm run dev        # predev에서 sync-vendor가 자동 실행된다
 ```
 
-```
-$ node tools/validate_alphatex.mjs data/{hash}/score.alphatex
-PARSE OK   bars=8  notes=28  time sig=4/4  syncPoints=8
-           staff tuning=[28, 33, 38, 43]
+http://localhost:3000 에서 링크를 넣거나 파일을 올리면 진행률이 실시간으로 뜨고,
+끝나면 플레이어로 넘어간다.
+
+CLI만 쓰려면:
+
+```bash
+python scripts/make_fixture.py                    # 테스트용 픽스처 생성
+python scripts/run_pipeline.py data/_fixture/mix.wav
+node tools/validate_alphatex.mjs data/{hash}/score.alphatex
+python eval/run_eval.py data/{hash} data/_fixture/truth.json
 ```
 
-### 두 경로 비교 — 병목은 채보가 아니라 스템 분리다
+## 측정 결과
 
-| 경로 | 노트 F1 | Precision | Recall | 처리시간 |
+합성 픽스처(120BPM 4/4 8마디, 정답 30음) 기준.
+
+| 경로 | 노트 F1 | Precision | Recall | 품질 점수 |
 |---|---|---|---|---|
-| 베이스 단독 입력 (분리 생략) | **0.931** | 0.964 | 0.900 | 4.4s |
-| 믹스 → Demucs → 채보 (전체) | **0.778** | 0.875 | 0.700 | 32.3s |
+| 베이스 단독 입력 (분리 생략) | **0.931** | 0.964 | 0.900 | — |
+| 믹스 → Demucs → 채보 (전체) | **0.815** | 0.917 | 0.733 | 81 (good) |
 
-둘 다 MVP 목표(F1 ≥ 0.75)를 넘겼다. 하지만 **Demucs를 거치면서 recall이
-0.900 → 0.700으로 떨어진다.** 온셋 오차는 두 경우 모두 0.0ms, 비트 F-measure는
-1.000, BPM·마디 수도 정확하다.
+두 경우 모두 온셋 오차 **0.0ms**, 비트 F-measure **1.000**, BPM·마디 수 정확.
+MVP 목표(F1 ≥ 0.75) 통과.
 
-즉 리듬·타이밍·양자화는 이미 정확하고, 잃는 것은 **음 자체**다. 품질을 더
-올리려면 채보 파라미터가 아니라 **분리 모델**을 손대야 한다
-(PRD 5의 대안: `python-audio-separator`의 BS-RoFormer).
+### 병목은 채보가 아니라 스템 분리다
+
+Demucs를 거치면서 **recall이 0.900 → 0.733으로 떨어진다.** 리듬·타이밍·양자화는
+두 경우 모두 완벽하므로, 잃는 것은 음 자체다. 품질을 더 올리려면 채보
+파라미터가 아니라 분리 모델을 손대야 한다 (PRD 5의 `python-audio-separator`
+BS-RoFormer).
 
 > 합성 신호 기준이라 **파이프라인 상한**이다. 실제 밴드 믹스는 더 어렵다.
-
-## 설치
-
-Python 3.12 + ffmpeg 필요.
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-pip install demucs beat-this yt-dlp fastapi "uvicorn[standard]" mir_eval pretty_midi soundfile
-
-# basic-pitch / tuttut은 Python 3.12에서 의존성이 깨진다 (PRD 부록 A.1)
-pip install basic-pitch --no-deps
-pip install onnxruntime librosa resampy scikit-learn typing-extensions
-pip install tuttut --no-deps
-pip install networkx matplotlib
-```
-
-모델 사전 다운로드:
-
-```bash
-python -c "from demucs.pretrained import get_model; get_model('htdemucs')"
-python -c "from beat_this.inference import File2Beats; File2Beats(device='cpu')"
-```
 
 ## 구조
 
 ```
-apps/worker/pipeline/
-├── ingest/          # 수집 어댑터 (yt-dlp / 파일업로드)
-├── separate.py      # Demucs htdemucs 4스템 분리
-├── beats.py         # beat_this 비트·다운비트 (원본 믹스에 적용)
-├── bassclean.py     # 배음 제거·단선율 강제·옥타브 보정
-├── quantize.py      # 비트 그리드 양자화          (미구현)
-├── fretting.py      # tuttut 운지 배정            (미구현)
-└── alphatex.py      # AlphaTex + \sync 생성       (미구현)
+apps/
+├── worker/                  # FastAPI + 파이프라인
+│   ├── main.py              # 잡 API, SSE, 라이브러리
+│   ├── jobs.py              # 오케스트레이션 (큐 없이 asyncio.to_thread)
+│   └── pipeline/
+│       ├── ingest/          # 수집 어댑터 (yt-dlp / 파일업로드)
+│       ├── separate.py      # Demucs htdemucs 4스템
+│       ├── beats.py         # beat_this (원본 믹스에 적용)
+│       ├── transcribe.py    # basic-pitch (베이스 전용 파라미터)
+│       ├── bassclean.py     # 배음 제거·단선율 강제·옥타브 보정
+│       ├── quantize.py      # 비트 그리드 양자화 + 다운비트 위상 교정
+│       ├── fretting.py      # 운지 배정 (자체 Viterbi DP)
+│       ├── alphatex.py      # AlphaTex + sync 포인트 생성
+│       └── quality.py       # 품질 게이트 3단계
+└── web/                     # Next.js 16
+    ├── lib/player/
+    │   ├── engine.ts        # 8채널 단일 스트레처 오디오 그래프
+    │   └── alphatab.ts      # 로더 + 외부 미디어 브리지
+    └── components/player/   # 믹서·트랜스포트·악보·자체검증
+
+eval/run_eval.py             # 노트 F1, 비트 F-measure
+tools/validate_alphatex.mjs  # alphaTab 파서로 문법 검증
+tools/probe_syntax.mjs       # AlphaTex 문법 탐침
+tools/poc/stretch8.html      # 8채널 스트레처 PoC
+```
+
+## 설치
+
+Python 3.12 + Node 24 + ffmpeg.
+
+```bash
+python -m venv .venv && .venv\Scripts\activate
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install -r apps/worker/requirements.txt
+
+# basic-pitch / tuttut은 Python 3.12에서 의존성이 깨진다 (PRD 부록 A.1)
+pip install basic-pitch==0.4.0 --no-deps
+pip install tuttut==0.0.6 --no-deps
+
+# 모델 사전 다운로드
+python -c "from demucs.pretrained import get_model; get_model('htdemucs')"
+python -c "from beat_this.inference import File2Beats; File2Beats(device='cpu')"
+
+cd apps/web && npm install
 ```
 
 ## 스택
@@ -106,6 +123,12 @@ apps/worker/pipeline/
 | 스템 분리 | Demucs v4 (htdemucs) | MIT |
 | 채보 | spotify/basic-pitch | Apache-2.0 |
 | 비트 추적 | CPJKU/beat_this | MIT |
-| MIDI→탭 | natecdr/tuttut | MIT |
 | 악보 렌더 | alphaTab | MPL-2.0 |
 | 타임스트레치 | signalsmith-stretch | MIT |
+
+`signalsmith-stretch`와 `@coderline/alphatab`은 **번들러를 태우면 안 된다.**
+전자는 워크릿 코드를 함수 `toString()`으로 직렬화하고, 후자는 자체
+Worker/AudioWorklet을 만들며 폰트를 상대경로로 찾는다. Turbopack용 공식
+플러그인이 없어서 `scripts/sync-vendor.mjs`가 원본을 `public/vendor/`로
+복사하고 런타임에 `turbopackIgnore`로 로드한다. 자세한 내용은
+`apps/web/lib/player/engine.ts` 상단 주석.

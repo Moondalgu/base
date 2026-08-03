@@ -31,10 +31,14 @@ type SignalsmithStretchFn = (
 
 let stretchFactory: SignalsmithStretchFn | null = null;
 
+// 경로를 변수로 둔다. 리터럴로 쓰면 TypeScript가 모듈 해석을 시도해
+// "Cannot find module '/vendor/...'"로 실패한다. 이 파일은 런타임에만 존재한다.
+const SIGNALSMITH_URL = "/vendor/SignalsmithStretch.mjs";
+
 async function loadSignalsmith(): Promise<SignalsmithStretchFn> {
   if (stretchFactory) return stretchFactory;
   const mod = await import(
-    /* webpackIgnore: true */ /* turbopackIgnore: true */ "/vendor/SignalsmithStretch.mjs"
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ SIGNALSMITH_URL
   );
   stretchFactory = (mod.default ?? mod) as SignalsmithStretchFn;
   return stretchFactory;

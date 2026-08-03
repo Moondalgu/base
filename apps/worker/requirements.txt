@@ -1,0 +1,48 @@
+# Python 3.12 기준. 설치 순서가 중요하다.
+#
+# 1) PyTorch CPU 빌드를 먼저 넣는다 (안 그러면 CUDA 버전을 끌어온다)
+#      pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#
+# 2) 아래 목록
+#      pip install -r requirements.txt
+#
+# 3) basic-pitch와 tuttut은 --no-deps로 따로 넣는다 (PRD 부록 A.1)
+#    Python 3.12에서 옛 numpy 핀을 소스 빌드하려다 깨지고
+#    (pkgutil.ImpImporter 제거), basic-pitch 0.4.0은 런타임 의존성 조건이
+#    python_version < "3.11"이라 3.12에서는 ONNX/TF를 아예 설치하지 않는다.
+#
+#      pip install basic-pitch==0.4.0 --no-deps
+#      pip install tuttut==0.0.6 --no-deps
+
+# 스템 분리
+demucs==4.1.0
+
+# 비트·다운비트
+beat-this==1.1.0
+
+# 채보 런타임 (basic-pitch를 ONNX로 돌린다)
+onnxruntime==1.28.0
+librosa==0.11.0
+resampy==0.4.3
+scikit-learn==1.9.0
+
+# tuttut 의존 (비교용 백엔드)
+networkx==3.6.1
+matplotlib==3.11.1
+
+# 오디오 I/O
+soundfile==0.14.0
+numpy==2.4.6
+scipy==1.18.0
+
+# 수집
+yt-dlp==2026.7.4
+
+# 웹
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+
+# 평가
+mir_eval==0.8.2
+pretty_midi==0.2.11.post0

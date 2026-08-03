@@ -19,7 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "worker"))
 
-from pipeline import alphatex, bassclean, beats, fretting, quantize, separate, transcribe  # noqa: E402
+from pipeline import (  # noqa: E402
+    alphatex, bassclean, beats, fretting, quality, quantize, separate, transcribe,
+)
 from pipeline.ingest import ingest  # noqa: E402
 
 DATA = ROOT / "data"
@@ -91,6 +93,13 @@ def main() -> int:
     fscore = fretting.assign(qscore, args.tuning, verbose=True)
     stages["fretting"] = _done(t)
 
+    # 품질 게이트
+    report = quality.evaluate(cleaned, clean_report, grid, qscore, fscore)
+    print(f"[quality] {report.score}점 ({report.level})"
+          + (f" — {report.reason}" if report.reason else ""))
+    for key, value in report.components.items():
+        print(f"           {key:26s} {value:.3f}")
+
     # 8) AlphaTex
     t = time.monotonic()
     try:
@@ -152,15 +161,10 @@ def main() -> int:
         "noteCount": sum(len(b.notes) for b in fscore.bars),
         "subdivision": fscore.subdivision,
         "swing": qscore.swing,
-        "quality": {
-            "components": {
-                "quantizationResidual": round(qscore.mean_residual, 4),
-                "beatStability": round(max(0.0, 1.0 - grid.bpm_variance), 4),
-                "harmonicDropRatio": round(clean_report.harmonic_ratio, 4),
-                "outOfRangeRatio": round(clean_report.out_of_range_ratio, 4),
-                "unplayableCount": fscore.unplayable,
-            }
-        },
+        # 마디 시각 재구성에 필요하다 (eval/run_eval.py)
+        "phase": qscore.phase,
+        "phaseCorrected": qscore.phase_corrected,
+        "quality": report.to_dict(),
     }
     (workdir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

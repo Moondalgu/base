@@ -52,6 +52,10 @@ class QuantizedScore:
     swing: bool
     dropped_pickup: int      # 첫 다운비트 앞에 있어서 버린 음
     note_count: int
+    # 마디 시작 위상(비트 인덱스 mod beats_per_bar). manifest에 반드시 남긴다 —
+    # 이 값 없이는 산출물에서 마디 시각을 재구성할 수 없어 평가가 틀어진다.
+    phase: int = 0
+    phase_corrected: bool = False
 
 
 def quantize(notes: list[Note], grid: BeatGrid, *, verbose: bool = False) -> QuantizedScore:
@@ -117,6 +121,8 @@ def quantize(notes: list[Note], grid: BeatGrid, *, verbose: bool = False) -> Qua
         swing=swing,
         dropped_pickup=dropped_pickup,
         note_count=sum(len(b.notes) for b in bars),
+        phase=phase,
+        phase_corrected=phase_corrected,
     )
 
     if verbose:

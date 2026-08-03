@@ -95,7 +95,10 @@ def _render_bar(bar: FrettedBar, subdivision: int) -> str:
     if pos < bar.slots_per_bar:
         tokens.extend(_rests(bar.slots_per_bar - pos, subdivision))
 
-    return " ".join(tokens) if tokens else f"r.{4 * subdivision // bar.slots_per_bar or 1}"
+    # 음이 하나도 없는 마디도 박자만큼 쉼표로 채워야 alphaTab이 마디 길이를 맞춘다
+    if not tokens:
+        tokens = _rests(bar.slots_per_bar, subdivision)
+    return " ".join(tokens)
 
 
 def _rests(slots: int, subdivision: int) -> list[str]:

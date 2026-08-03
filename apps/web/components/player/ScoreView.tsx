@@ -27,7 +27,12 @@ export default function ScoreView({ hash, position, callbacks, qualityLevel }: P
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState("");
 
-  callbacksRef.current = callbacks;
+  // 렌더 중에 ref를 쓰면 안 된다(react-hooks/refs). effect에서 동기화한다.
+  // 부모가 매 렌더마다 새 콜백 객체를 만들어도 alphaTab 배선을 다시 하지 않게
+  // 하려고 ref에 담아둔다.
+  useEffect(() => {
+    callbacksRef.current = callbacks;
+  }, [callbacks]);
 
   useEffect(() => {
     let disposed = false;
