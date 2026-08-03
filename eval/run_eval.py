@@ -139,24 +139,48 @@ def _notes_from_alphatex(tex: str, manifest: dict, grid) -> list[tuple[float, in
     ]
     body = " ".join(body_lines)
 
+    from pipeline.alphatex import slots_of
+
     out: list[tuple[float, int]] = []
     for bar_idx, bar_text in enumerate(body.split("|")):
         if bar_idx >= len(slot_times):
             break
         slot = 0
-        for token in bar_text.split():
+        # 토큰은 공백으로 나뉘지만 셋잇단 표기 {tu 3} 안에도 공백이 있다.
+        # 중괄호가 닫힐 때까지 이어붙인다.
+        for token in _tokens(bar_text):
             parts = token.split(".")
             if parts[0] == "r":
-                duration = int(parts[1])
-                slot += (4 * subdivision) // duration
+                slot += slots_of(parts[1], subdivision)
                 continue
             if len(parts) != 3:
                 continue
-            fret, string, duration = int(parts[0]), int(parts[1]), int(parts[2])
+            fret, string = int(parts[0]), int(parts[1])
             pitch = tuning[string - 1] + fret
             if slot < len(slot_times[bar_idx]):
                 out.append((slot_times[bar_idx][slot], pitch))
-            slot += (4 * subdivision) // duration
+            slot += slots_of(parts[2], subdivision)
+    return out
+
+
+def _tokens(bar_text: str) -> list[str]:
+    """공백으로 나누되 중괄호 안의 공백은 유지한다 ({tu 3} 때문)."""
+    out: list[str] = []
+    current = ""
+    depth = 0
+    for ch in bar_text:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        if ch.isspace() and depth == 0:
+            if current:
+                out.append(current)
+                current = ""
+            continue
+        current += ch
+    if current:
+        out.append(current)
     return out
 
 

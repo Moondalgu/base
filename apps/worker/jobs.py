@@ -137,7 +137,16 @@ async def _run(job: Job) -> None:
         report = quality.evaluate(cleaned, clean_report, grid, qscore, fscore)
 
         def build_tex() -> str:
-            return alphatex.build(fscore, title=info.title)
+            nonlocal qscore, fscore, report
+            try:
+                return alphatex.build(fscore, title=info.title)
+            except alphatex.UnsupportedSubdivision:
+                # 예상 못 한 subdivision이면 스트레이트 16분으로 재양자화한다.
+                # 리듬은 덜 정확해지지만 악보가 아예 안 나오는 것보다 낫다.
+                qscore = quantize.quantize(cleaned, grid, force_subdivision=4)
+                fscore = fretting.assign(qscore, job.tuning)
+                report = quality.evaluate(cleaned, clean_report, grid, qscore, fscore)
+                return alphatex.build(fscore, title=info.title)
 
         tex = await run_stage("alphatex", build_tex)
         (workdir / "score.alphatex").write_text(tex, encoding="utf-8")

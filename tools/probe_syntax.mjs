@@ -11,16 +11,21 @@ const HEAD = `\\title "t"
 
 `;
 
+// 셋잇단 표기 후보. 8분음표 셋잇단 3개 = 4분음표 1박.
 const CASES = {
-  "r.8 두개": `0.4.4 r.8 r.8 0.4.4 0.4.4`,
-  "r.16 네개": `0.4.4 r.16 r.16 r.16 r.16 0.4.4 0.4.4`,
-  "타이 -.8 (쉼표없음)": `0.4.4 -.8 -.8 0.4.4 0.4.4`,
-  "타이 -.8 짧은음뒤": `0.4.8 -.8 0.4.4 0.4.4 0.4.4`,
-  "타이 -.16": `0.4.8 -.16 -.16 0.4.4 0.4.4 0.4.4`,
-  "타이 -.2": `0.4.2 -.2`,
-  "타이 두번 -.4": `0.4.4 -.4 -.4 -.4`,
-  "점음표 0.4.4{d}": `0.4.4{d} 0.4.8 0.4.4 0.4.4`,
-  "타이없이 쉼표패딩": `0.4.8 r.16 r.16 0.4.4 0.4.4 0.4.4`,
+  "tu 3 (8분 셋잇단 한 박)":
+    `0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.4 0.4.4 0.4.4`,
+  "tu 3 네 박 전부":
+    `0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} ` +
+    `0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3} 0.4.8{tu 3}`,
+  "tu 3 + 쉼표 혼합":
+    `0.4.8{tu 3} r.8{tu 3} 0.4.8{tu 3} 0.4.4 0.4.4 0.4.4`,
+  "tuplet 3 (풀네임)":
+    `0.4.8{tuplet 3} 0.4.8{tuplet 3} 0.4.8{tuplet 3} 0.4.4 0.4.4 0.4.4`,
+  "tu 3 4분 셋잇단":
+    `0.4.4{tu 3} 0.4.4{tu 3} 0.4.4{tu 3} 0.4.2`,
+  "셋잇단 없이 8분 6개(비교군)":
+    `0.4.8 0.4.8 0.4.8 0.4.8 0.4.8 0.4.8 0.4.4 0.4.4`,
 };
 
 const AlphaTexImporter = alphaTab.importer.AlphaTexImporter;
@@ -33,10 +38,17 @@ for (const [name, body] of Object.entries(CASES)) {
     const score = imp.readScore();
     const bars = score.tracks[0].staves[0].bars;
     let notes = 0;
+    let tuplets = 0;
     for (const bar of bars)
-      for (const v of bar.voices) for (const b of v.beats) notes += b.notes.length;
-    console.log(`OK    ${name.padEnd(24)} bars=${bars.length} notes=${notes}`);
+      for (const v of bar.voices)
+        for (const b of v.beats) {
+          notes += b.notes.length;
+          if (b.tupletNumerator > 1) tuplets++;
+        }
+    console.log(
+      `OK    ${name.padEnd(26)} bars=${bars.length} notes=${notes} tupletBeats=${tuplets}`,
+    );
   } catch (e) {
-    console.log(`FAIL  ${name.padEnd(24)} ${e?.message ?? e}`);
+    console.log(`FAIL  ${name.padEnd(26)} ${e?.message ?? e}`);
   }
 }

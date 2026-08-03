@@ -23,6 +23,13 @@ interface StageState {
   ms?: number;
 }
 
+/** 워커에 닿지도 못한 경우인지 판별한다 (파이프라인 실패와 구분) */
+function isConnectionError(message: string): boolean {
+  return /failed to fetch|networkerror|load failed|econnrefused|이벤트 스트림/i.test(
+    message,
+  );
+}
+
 export default function JobRunner() {
   const router = useRouter();
   const [url, setUrl] = useState("");
@@ -232,9 +239,15 @@ export default function JobRunner() {
           <pre className="overflow-x-auto rounded bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
             {error}
           </pre>
-          <p className="text-xs text-neutral-500">
-            워커가 떠 있는지 확인하세요: <code>uvicorn main:app --port 8000</code>
-          </p>
+          {/*
+            연결 실패일 때만 워커 안내를 띄운다. 파이프라인이 실패한 경우에도
+            "워커가 떠 있는지 확인하세요"를 보여주면 엉뚱한 곳을 보게 된다.
+          */}
+          {isConnectionError(error) && (
+            <p className="text-xs text-neutral-500">
+              워커가 떠 있는지 확인하세요: <code>uvicorn main:app --port 8000</code>
+            </p>
+          )}
         </div>
       )}
     </div>

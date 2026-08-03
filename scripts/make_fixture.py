@@ -81,11 +81,71 @@ def snare() -> np.ndarray:
     return (noise * 0.5 + body * 0.35) * 0.5
 
 
+def swing_offsets() -> list[float]:
+    """셔플 리듬의 8분음표 위치. 박 안에서 0, 2/3 지점에 온다.
+
+    스트레이트는 0, 1/2. 이 차이를 quantize._detect_swing이 잡아낸다.
+    """
+    out: list[float] = []
+    for beat in range(BEATS_PER_BAR):
+        base = beat * BEAT_SEC
+        out.append(base)
+        out.append(base + BEAT_SEC * 2 / 3)
+    return out
+
+
+def build_swing(bass: np.ndarray, drums: np.ndarray, total: int) -> list[dict]:
+    """셔플 베이스 라인 + 스윙 하이햇. 정답 목록을 돌려준다."""
+    truth: list[dict] = []
+    # 루트-5도-옥타브-5도 셔플 (E1 B1 E2 B1)
+    pitches = [28, 35, 40, 35, 33, 40, 45, 40]
+    k, s, h = kick(), snare(), hat()
+
+    def place(target: np.ndarray, sample: np.ndarray, at_sec: float) -> None:
+        i = int(at_sec * SR)
+        if i >= total:
+            return
+        seg = target[i : i + len(sample)]
+        seg += sample[: len(seg)]
+
+    for bar in range(BARS):
+        bar_start = bar * BAR_SEC
+        offsets = swing_offsets()
+        for idx, off in enumerate(offsets):
+            start = bar_start + off
+            if start >= BARS * BAR_SEC:
+                break
+            midi = pitches[idx % len(pitches)]
+            # 셔플은 앞음이 길고 뒷음이 짧다
+            dur = BEAT_SEC * (2 / 3) if idx % 2 == 0 else BEAT_SEC * (1 / 3)
+            place(bass, pluck(midi, dur), start)
+            truth.append({
+                "start": round(start, 6),
+                "end": round(start + dur, 6),
+                "pitch": midi,
+                "bar": bar,
+            })
+            place(drums, h, start)
+        for beat in (0, 2):
+            place(drums, k, bar_start + beat * BEAT_SEC)
+        for beat in (1, 3):
+            place(drums, s, bar_start + beat * BEAT_SEC)
+    return truth
+
+
 def main() -> None:
+    import sys
+
+    swing = "--swing" in sys.argv
     total_sec = BARS * BAR_SEC
     total = int(SR * total_sec)
     bass = np.zeros(total, dtype=np.float64)
     drums = np.zeros(total, dtype=np.float64)
+
+    if swing:
+        truth = build_swing(bass, drums, total)
+        _write_outputs(bass, drums, truth, suffix="_swing")
+        return
 
     # 베이스 — 4마디 패턴을 2번 반복
     truth: list[dict] = []
@@ -124,29 +184,40 @@ def main() -> None:
         for e in range(BEATS_PER_BAR * 2):
             place(h, bar_start + e * EIGHTH)
 
+    _write_outputs(bass, drums, truth, suffix="")
+
+
+def _write_outputs(
+    bass: np.ndarray, drums: np.ndarray, truth: list[dict], suffix: str
+) -> None:
     def to_stereo(x: np.ndarray) -> np.ndarray:
         peak = np.max(np.abs(x)) or 1.0
         x = (x / peak * 0.85).astype(np.float32)
         return np.stack([x, x], axis=1)
 
-    bass_path = OUT / "bass_only.wav"
-    mix_path = OUT / "mix.wav"
+    bass_path = OUT / f"bass_only{suffix}.wav"
+    mix_path = OUT / f"mix{suffix}.wav"
     sf.write(bass_path, to_stereo(bass), SR)
     sf.write(mix_path, to_stereo(bass + drums), SR)
 
+    total_sec = BARS * BAR_SEC
     meta = {
         "bpm": BPM,
         "beatsPerBar": BEATS_PER_BAR,
         "bars": BARS,
         "durationSec": round(total_sec, 3),
+        "swing": bool(suffix),
         "noteCount": len(truth),
         "notes": truth,
     }
-    (OUT / "truth.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (OUT / f"truth{suffix}.json").write_text(
+        json.dumps(meta, indent=2), encoding="utf-8"
+    )
 
     print(f"[fixture] {bass_path.name}  베이스 단독")
     print(f"[fixture] {mix_path.name}   베이스+드럼 믹스")
-    print(f"[fixture] {BPM}BPM {BEATS_PER_BAR}/4 {BARS}마디 {total_sec:.1f}s, 정답 {len(truth)}음")
+    print(f"[fixture] {BPM}BPM {BEATS_PER_BAR}/4 {BARS}마디 {total_sec:.1f}s, "
+          f"정답 {len(truth)}음{' (스윙)' if suffix else ''}")
 
 
 if __name__ == "__main__":

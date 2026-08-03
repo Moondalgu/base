@@ -58,13 +58,26 @@ class QuantizedScore:
     phase_corrected: bool = False
 
 
-def quantize(notes: list[Note], grid: BeatGrid, *, verbose: bool = False) -> QuantizedScore:
-    """정리된 노트를 마디/슬롯 좌표로 옮긴다."""
+def quantize(
+    notes: list[Note],
+    grid: BeatGrid,
+    *,
+    verbose: bool = False,
+    force_subdivision: int | None = None,
+) -> QuantizedScore:
+    """정리된 노트를 마디/슬롯 좌표로 옮긴다.
+
+    force_subdivision을 주면 스윙 감지를 무시하고 그 값을 쓴다.
+    셋잇단 표기가 안 되는 상황의 폴백용이다.
+    """
     if len(grid.downbeats) < 2 or len(grid.beats) < 2:
         raise ValueError("비트 그리드가 부족합니다. 비트 추적 결과를 확인하세요.")
 
     swing = _detect_swing(notes, grid)
-    subdivision = SWING_SUBDIVISION if swing else DEFAULT_SUBDIVISION
+    if force_subdivision is not None:
+        subdivision = force_subdivision
+    else:
+        subdivision = SWING_SUBDIVISION if swing else DEFAULT_SUBDIVISION
     beats_per_bar = grid.beats_per_bar
     slots_per_bar = beats_per_bar * subdivision
 

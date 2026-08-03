@@ -14,12 +14,60 @@ import pretty_midi
 
 from .fretting import FrettedBar, FrettedScore
 
-# AlphaTex가 받는 음길이 값
-VALID_DURATIONS = {1, 2, 4, 8, 16, 32, 64}
-
-
 class UnsupportedSubdivision(ValueError):
     pass
+
+
+# 슬롯 수 -> AlphaTex 음길이 표기. 큰 것부터 정렬한다.
+#
+# 스윙(subdivision=3)은 셋잇단으로 적는다. 셔플·블루스는 흔하고, 스윙 곡을
+# 16분 격자에 억지로 맞추면 리듬이 틀린다.
+#   1박 = 3슬롯이므로
+#     8분 셋잇단 = 1슬롯,  4분 셋잇단 = 2슬롯 (1박의 2/3)
+#     2분 셋잇단 = 4슬롯,  온음표 셋잇단 = 8슬롯
+# {tu 3} 문법은 alphaTab 파서에서 확인했다 ({tuplet 3} 풀네임은 거부된다).
+_DURATION_TABLES: dict[int, list[tuple[int, str]]] = {
+    4: [(16, "1"), (8, "2"), (4, "4"), (2, "8"), (1, "16")],
+    3: [
+        (12, "1"),
+        (8, "1{tu 3}"),
+        (6, "2"),
+        (4, "2{tu 3}"),
+        (3, "4"),
+        (2, "4{tu 3}"),
+        (1, "8{tu 3}"),
+    ],
+}
+
+
+def _duration_table(subdivision: int) -> list[tuple[int, str]]:
+    table = _DURATION_TABLES.get(subdivision)
+    if table is None:
+        raise UnsupportedSubdivision(
+            f"subdivision={subdivision}은 지원하지 않습니다. "
+            f"지원: {sorted(_DURATION_TABLES)}"
+        )
+    return table
+
+
+def _largest_fitting(slots: int, table: list[tuple[int, str]]) -> tuple[int, str]:
+    """슬롯 수 이하로 표기 가능한 가장 긴 음길이를 고른다."""
+    for size, token in table:
+        if size <= slots:
+            return size, token
+    return table[-1]
+
+
+def slots_of(duration_token: str, subdivision: int) -> int:
+    """음길이 표기를 슬롯 수로 되돌린다.
+
+    산출물을 다시 읽어야 하는 쪽(eval/run_eval.py)이 파싱 규칙을 따로 두면
+    셋잇단 같은 표기가 추가될 때마다 어긋난다. 표를 여기 하나만 둔다.
+    """
+    for size, token in _duration_table(subdivision):
+        if token == duration_token:
+            return size
+    raise ValueError(f"알 수 없는 음길이 표기: {duration_token!r}")
 
 
 def build(
@@ -30,12 +78,7 @@ def build(
     include_sync: bool = True,
 ) -> str:
     """FrettedScore를 AlphaTex 문자열로 만든다."""
-    slot_value = 4 * score.subdivision
-    if slot_value not in VALID_DURATIONS:
-        raise UnsupportedSubdivision(
-            f"subdivision={score.subdivision}은 아직 지원하지 않습니다 "
-            f"(슬롯 음길이 {slot_value}이 AlphaTex 값이 아님). 셋잇단 표기 필요."
-        )
+    _duration_table(score.subdivision)  # 지원 여부를 먼저 확인한다
 
     lines: list[str] = []
     lines.append(f'\\title "{_escape(title)}"')
@@ -69,63 +112,47 @@ def _tuning_names(tuning: list[int]) -> str:
 
 
 def _render_bar(bar: FrettedBar, subdivision: int) -> str:
+    table = _duration_table(subdivision)
     tokens: list[str] = []
     pos = 0
+
     for note in sorted(bar.notes, key=lambda n: n.slot):
         if note.slot < pos:
             continue  # 단선율 전제 위반. 앞 음을 존중하고 건너뛴다.
         if note.slot > pos:
-            tokens.extend(_rests(note.slot - pos, subdivision))
+            tokens.extend(_rests(note.slot - pos, table))
             pos = note.slot
 
         remaining = min(note.duration_slots, bar.slots_per_bar - pos)
 
         # 타이(-)를 쓰지 않는다. alphaTab 파서가 -.8 / -.16 형태를 거부하는 것을
-        # 실측 확인했다(tools/probe_syntax.mjs). 대신 음길이를 2의 거듭제곱으로
-        # 내림하고 남는 만큼을 쉼표로 채운다.
+        # 실측 확인했다(tools/probe_syntax.mjs). 대신 표기 가능한 가장 긴
+        # 음길이로 내림하고 남는 만큼을 쉼표로 채운다.
         # 대가: 실제 연주보다 음이 조금 짧게 표기될 수 있다. 리듬 위치는 정확하다.
-        head = _largest_power_of_two(remaining)
-        duration = (4 * subdivision) // head
+        head, duration = _largest_fitting(remaining, table)
         # alphaTab 현 번호는 1부터, 가장 얇은 현이 1번
         tokens.append(f"{note.fret}.{note.string + 1}.{duration}")
         if remaining > head:
-            tokens.extend(_rests(remaining - head, subdivision))
+            tokens.extend(_rests(remaining - head, table))
         pos += remaining
 
     if pos < bar.slots_per_bar:
-        tokens.extend(_rests(bar.slots_per_bar - pos, subdivision))
+        tokens.extend(_rests(bar.slots_per_bar - pos, table))
 
     # 음이 하나도 없는 마디도 박자만큼 쉼표로 채워야 alphaTab이 마디 길이를 맞춘다
     if not tokens:
-        tokens = _rests(bar.slots_per_bar, subdivision)
+        tokens = _rests(bar.slots_per_bar, table)
     return " ".join(tokens)
 
 
-def _rests(slots: int, subdivision: int) -> list[str]:
-    return [f"r.{(4 * subdivision) // chunk}" for chunk in _decompose(slots)]
-
-
-def _largest_power_of_two(slots: int) -> int:
-    chunk = 1
-    while chunk * 2 <= slots:
-        chunk *= 2
-    return chunk
-
-
-def _decompose(slots: int) -> list[int]:
-    """슬롯 수를 2의 거듭제곱 조각으로 쪼갠다. 큰 조각 우선.
-
-    AlphaTex 음길이가 2의 거듭제곱만 받으므로, 5슬롯 같은 값은
-    4 + 1로 나눠 타이/쉼표로 이어붙인다.
-    """
-    out: list[int] = []
+def _rests(slots: int, table: list[tuple[int, str]]) -> list[str]:
+    """남은 슬롯을 쉼표로 채운다. 큰 단위부터 욕심껏 쪼갠다."""
+    out: list[str] = []
     remaining = slots
     while remaining > 0:
-        chunk = 1
-        while chunk * 2 <= remaining:
-            chunk *= 2
-        out.append(chunk)
-        remaining -= chunk
+        size, duration = _largest_fitting(remaining, table)
+        out.append(f"r.{duration}")
+        remaining -= size
     return out
 
 

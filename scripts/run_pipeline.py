@@ -109,11 +109,11 @@ def main() -> int:
             include_sync=not args.no_sync,
         )
     except alphatex.UnsupportedSubdivision as exc:
+        # 예상 못 한 subdivision이 나오면 스트레이트 16분으로 재양자화한다.
+        # 리듬은 덜 정확해지지만 악보가 아예 안 나오는 것보다 낫다.
         print(f"[alphatex] {exc}")
-        print("[alphatex] 스윙 셋잇단은 아직 미지원. subdivision 4로 재양자화합니다.")
-        quantize.DEFAULT_SUBDIVISION = 4
-        qscore = quantize.quantize(cleaned, grid, verbose=True)
-        qscore.subdivision = 4
+        print("[alphatex] subdivision 4로 재양자화합니다.")
+        qscore = quantize.quantize(cleaned, grid, verbose=True, force_subdivision=4)
         fscore = fretting.assign(qscore, args.tuning, verbose=True)
         tex = alphatex.build(fscore, title=info.title, include_sync=not args.no_sync)
     tex_path = workdir / "score.alphatex"
