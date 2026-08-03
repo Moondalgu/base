@@ -62,19 +62,32 @@ def track_beats(wav_path: Path, outdir: Path, device: str = "cpu") -> BeatGrid:
 
 
 def _infer_beats_per_bar(beats: list[float], downbeats: list[float]) -> int:
-    """다운비트 사이에 낀 비트 수의 최빈값으로 박자표를 추론한다."""
+    """다운비트 사이에 낀 비트 수로 박자표를 추론한다.
+
+    최빈값이 아니라 중앙값을 쓴다. 최빈값은 다운비트가 한두 군데 튀면
+    엉뚱한 값으로 끌려가는데, 이 값이 마디 길이를 결정하므로 틀리면
+    악보 전체가 틀린다.
+
+    2박으로 나오는 경우가 흔한데(킥이 1·3박에만 있는 패턴), 실제로는
+    4/4의 절반으로 잡은 것이다. 2는 4로 승격한다.
+    """
     if len(downbeats) < 2:
         return 4
-    counts: list[int] = []
-    for start, end in zip(downbeats, downbeats[1:]):
-        counts.append(sum(1 for b in beats if start <= b < end))
+    counts = [
+        sum(1 for b in beats if start <= b < end)
+        for start, end in zip(downbeats, downbeats[1:])
+    ]
+    counts = [c for c in counts if c > 0]
     if not counts:
         return 4
-    try:
-        value = statistics.mode(counts)
-    except statistics.StatisticsError:
-        value = round(statistics.median(counts))
-    return value if value in (2, 3, 4, 5, 6, 7) else 4
+
+    value = round(statistics.median(counts))
+    if value == 2:
+        # 2박 마디는 거의 항상 4/4를 반으로 쪼갠 결과다
+        value = 4
+    elif value == 1:
+        value = 4
+    return value if value in (3, 4, 5, 6, 7) else 4
 
 
 def _median_bpm(beats: list[float]) -> float:
