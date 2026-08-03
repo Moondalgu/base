@@ -9,6 +9,7 @@ import {
   type Gains,
   type StemName,
 } from "@/lib/player/engine";
+import ScoreView from "./ScoreView";
 import StemMixer from "./StemMixer";
 import TransportBar from "./TransportBar";
 
@@ -19,6 +20,7 @@ interface Manifest {
   barCount?: number;
   noteCount?: number;
   tuning?: { preset?: string; midi?: number[] };
+  quality?: { level?: "good" | "reference" | "failed"; score?: number };
 }
 
 type Status = "loading" | "ready" | "error";
@@ -83,17 +85,24 @@ export default function PlayerShell({ hash }: { hash: string }) {
     };
   }, [hash]);
 
+  /** alphaTab이 요청하는 재생/정지도 여기로 모은다 */
+  const toggleTo = useCallback(async (shouldPlay: boolean) => {
+    const player = playerRef.current;
+    if (!player) return;
+    if (shouldPlay && !player.playing) {
+      await player.play();
+      setPlaying(true);
+    } else if (!shouldPlay && player.playing) {
+      player.pause();
+      setPlaying(false);
+    }
+  }, []);
+
   const toggle = useCallback(async () => {
     const player = playerRef.current;
     if (!player) return;
-    if (player.playing) {
-      player.pause();
-      setPlaying(false);
-    } else {
-      await player.play();
-      setPlaying(true);
-    }
-  }, []);
+    await toggleTo(!player.playing);
+  }, [toggleTo]);
 
   const handleSeek = useCallback((seconds: number) => {
     playerRef.current?.seek(seconds);
@@ -167,6 +176,26 @@ export default function PlayerShell({ hash }: { hash: string }) {
         onSeek={handleSeek}
         onRate={handleRate}
         onSemitones={handleSemitones}
+      />
+
+      <ScoreView
+        hash={hash}
+        position={position}
+        qualityLevel={manifest?.quality?.level}
+        callbacks={{
+          play: () => {
+            void toggleTo(true);
+          },
+          pause: () => {
+            void toggleTo(false);
+          },
+          seekTo: handleSeek,
+          setRate: handleRate,
+          setVolume: () => {
+            /* 마스터 볼륨은 스템 믹서가 담당한다 */
+          },
+          durationSeconds: () => playerRef.current?.duration ?? 0,
+        }}
       />
 
       <StemMixer
