@@ -1,0 +1,135 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>signalsmith 8채널 PoC</title>
+<pre id="log">실행 중...</pre>
+<script type="module">
+import SignalsmithStretch from "/node_modules/signalsmith-stretch/SignalsmithStretch.mjs";
+
+const out = [];
+const log = (s) => { out.push(s); document.getElementById("log").textContent = out.join("\n"); };
+
+const SR = 44100;
+const DUR = 2.0;
+const STEMS = ["drums", "bass", "vocals", "other"];
+// 스템별로 구분되는 주파수를 준다. 출력에서 이 주파수 에너지를 재면
+// 어느 스템이 실제로 흘러나왔는지 확인할 수 있다.
+const FREQ = [110, 220, 440, 880];
+
+/** Goertzel — 특정 주파수 성분의 에너지만 뽑는다. */
+function goertzel(samples, freq, sr) {
+  const k = Math.round((samples.length * freq) / sr);
+  const w = (2 * Math.PI * k) / samples.length;
+  const cosine = Math.cos(w), coeff = 2 * cosine;
+  let s0 = 0, s1 = 0, s2 = 0;
+  for (let i = 0; i < samples.length; i++) {
+    s0 = samples[i] + coeff * s1 - s2;
+    s2 = s1; s1 = s0;
+  }
+  return Math.sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2) / samples.length;
+}
+
+function makeStems(seconds) {
+  const n = Math.floor(SR * seconds);
+  // 8채널 = 스템4 × 스테레오2
+  return FREQ.flatMap((f) => {
+    const ch = new Float32Array(n);
+    for (let i = 0; i < n; i++) ch[i] = 0.5 * Math.sin((2 * Math.PI * f * i) / SR);
+    return [ch, ch.slice()];
+  });
+}
+
+/**
+ * 스템별 게인을 주고 오프라인 렌더링해서 스테레오 결과를 돌려준다.
+ * @param gains 길이 4의 배열
+ * @param rate 재생 속도 (0.5 = 반배속)
+ */
+async function render(gains, rate, renderSeconds) {
+  const ctx = new OfflineAudioContext({
+    numberOfChannels: 2,
+    length: Math.floor(SR * renderSeconds),
+    sampleRate: SR,
+  });
+
+  const stretch = await SignalsmithStretch(ctx, {
+    numberOfInputs: 0,
+    numberOfOutputs: 1,
+    outputChannelCount: [8],
+  });
+
+  await stretch.addBuffers(makeStems(DUR));
+
+  const splitter = ctx.createChannelSplitter(8);
+  const merger = ctx.createChannelMerger(2);
+  stretch.connect(splitter);
+
+  STEMS.forEach((name, i) => {
+    const g = ctx.createGain();
+    g.gain.value = gains[i];
+    splitter.connect(g, i * 2);       // L
+    splitter.connect(g, i * 2 + 1);   // R (같은 게인 노드로 합류)
+    g.connect(merger, 0, 0);
+    g.connect(merger, 0, 1);
+  });
+  merger.connect(ctx.destination);
+
+  stretch.schedule({ output: 0, active: true, input: 0, rate });
+  stretch.start(0);
+
+  const buf = await ctx.startRendering();
+  return buf.getChannelData(0);
+}
+
+function energies(samples) {
+  return FREQ.map((f) => goertzel(samples, f, SR));
+}
+
+try {
+  log("=== 1) 8채널 노드 생성 + 전 스템 재생 ===");
+  const all = await render([1, 1, 1, 1], 1.0, DUR);
+  const eAll = energies(all);
+  log("  주파수별 에너지: " + eAll.map((e, i) => `${FREQ[i]}Hz=${e.toFixed(4)}`).join("  "));
+  const allOk = eAll.every((e) => e > 0.01);
+  log("  4개 스템 모두 출력됨: " + (allOk ? "OK" : "실패"));
+
+  log("");
+  log("=== 2) 베이스만 솔로 (게인 [0,1,0,0]) ===");
+  const solo = await render([0, 1, 0, 0], 1.0, DUR);
+  const eSolo = energies(solo);
+  log("  주파수별 에너지: " + eSolo.map((e, i) => `${FREQ[i]}Hz=${e.toFixed(4)}`).join("  "));
+  const soloOk = eSolo[1] > 0.01 && eSolo[0] < eSolo[1] * 0.1 &&
+                 eSolo[2] < eSolo[1] * 0.1 && eSolo[3] < eSolo[1] * 0.1;
+  log("  베이스만 남음: " + (soloOk ? "OK" : "실패"));
+
+  log("");
+  log("=== 3) 베이스 부스트 (게인 [1,2,1,1]) ===");
+  const boost = await render([1, 2, 1, 1], 1.0, DUR);
+  const eBoost = energies(boost);
+  const ratio = eBoost[1] / eAll[1];
+  log(`  베이스 에너지 ${eAll[1].toFixed(4)} -> ${eBoost[1].toFixed(4)} (비율 ${ratio.toFixed(2)})`);
+  log("  2배 부스트 반영: " + (ratio > 1.8 && ratio < 2.2 ? "OK" : "실패"));
+
+  log("");
+  log("=== 4) 반배속 (rate 0.5) — 피치 유지 확인 ===");
+  // 2초 소스를 0.5배속으로 4초 렌더링. 피치가 유지되면 주파수는 그대로여야 한다.
+  const slow = await render([0, 1, 0, 0], 0.5, DUR * 2);
+  const eSlow = energies(slow);
+  log("  주파수별 에너지: " + eSlow.map((e, i) => `${FREQ[i]}Hz=${e.toFixed(4)}`).join("  "));
+  // 반배속인데 220Hz가 그대로 = 피치 유지. 110Hz로 내려갔으면 실패.
+  const pitchKept = eSlow[1] > 0.01 && eSlow[0] < eSlow[1] * 0.2;
+  log("  피치 유지(220Hz 그대로, 110Hz로 안 내려감): " + (pitchKept ? "OK" : "실패"));
+
+  // 뒷부분에도 소리가 있어야 실제로 늘어난 것
+  const tail = slow.slice(Math.floor(slow.length * 0.75));
+  const tailRms = Math.sqrt(tail.reduce((a, v) => a + v * v, 0) / tail.length);
+  log(`  후반부 RMS ${tailRms.toFixed(4)} (2초 소스가 4초로 늘어남): ` +
+      (tailRms > 0.01 ? "OK" : "실패"));
+
+  log("");
+  const pass = allOk && soloOk && ratio > 1.8 && ratio < 2.2 && pitchKept && tailRms > 0.01;
+  log(pass ? "RESULT: PASS" : "RESULT: FAIL");
+  window.__pocResult = { pass, eAll, eSolo, ratio, eSlow, tailRms };
+} catch (e) {
+  log("EXCEPTION: " + (e?.stack ?? e));
+  window.__pocResult = { pass: false, error: String(e) };
+}
+</script>

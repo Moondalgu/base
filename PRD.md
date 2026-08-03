@@ -350,13 +350,15 @@ Celery/Redis를 도입하지 않는다. 로컬 단일 사용자에 과하다.
 
 ### 6.7 프론트엔드 오디오 엔진
 
+> API는 부록 A.5에서 실측 확인했다. 아래는 검증된 형태다.
+
 ```ts
-// components/player/engine.ts (스케치)
+// components/player/engine.ts
 const ctx = new AudioContext();
 const stretch = await SignalsmithStretch(ctx, {
   numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [8],
 });
-stretch.setState({ sample: { buffers: interleavedStemChannels } }); // 8ch
+await stretch.addBuffers(stemChannels);   // Float32Array 8개 (스템4 × 스테레오2)
 
 const splitter = ctx.createChannelSplitter(8);
 const merger   = ctx.createChannelMerger(2);
@@ -371,10 +373,15 @@ STEMS.forEach((name, i) => {              // drums, bass, vocals, other
 });
 merger.connect(ctx.destination);
 
+// 속도·피치·루프는 전부 schedule() 하나로
+stretch.schedule({ output: ctx.currentTime, active: true, input: 0,
+                   rate: 0.5, semitones: 0 });
+stretch.start();
+
 // alphaTab에 위치만 주입 (소리는 내지 않음)
 setInterval(() => {
   (api.player.output as IExternalMediaSynthOutput)
-    .updatePosition(currentPlaybackMs());
+    .updatePosition(stretch.inputTime * 1000);
 }, 50);
 ```
 
@@ -621,3 +628,41 @@ E ||0---3-------------0-|3---------0---|
 
 > 주의: 이 수치는 합성 신호 기준이라 **파이프라인 상한**이다. 실제 밴드 믹스에서는
 > Demucs 분리 품질이 변수로 추가되므로 9의 목표치(노트 F1 ≥ 0.75)가 현실적 기준이다.
+
+### A.5 signalsmith-stretch — 실제 API와 8채널 검증
+
+`signalsmith-stretch@1.3.2`. **6.7에 처음 적었던 `setState({sample:{buffers}})`는 존재하지 않는다.**
+실제 API:
+
+```js
+const stretch = await SignalsmithStretch(audioContext, channelOptions);
+// channelOptions = AudioWorkletNode 옵션 그대로
+//   { numberOfInputs, numberOfOutputs, outputChannelCount }
+
+await stretch.addBuffers([ch0, ch1, ...]);  // 채널당 TypedArray 하나. 여러 번 호출 가능(스트리밍)
+stretch.schedule({ output, active, input, rate, semitones,
+                   loopStart, loopEnd, tonalityHz, formantSemitones });
+stretch.start(when);  stretch.stop(when);
+stretch.inputTime;    // 현재 입력 버퍼 내 재생 위치(초)
+stretch.setUpdateInterval(seconds, callback);
+stretch.dropBuffers(toSeconds);
+stretch.configure({ blockMs, intervalMs, splitComputation });
+```
+
+**예상보다 유리한 점**: `loopStart`/`loopEnd`가 내장이라 구간 반복(PLY-06)이 공짜고,
+`semitones`로 피치 시프트(PLY-07)도 같은 호출에서 처리된다. 별도 구현이 필요 없다.
+
+**8채널 PoC 결과** (`tools/poc/stretch8.html`, OfflineAudioContext 렌더링으로 결정적 검증):
+
+스템 4종에 각각 다른 주파수(110/220/440/880Hz)를 넣고 Goertzel로 출력 에너지를 측정.
+
+| 검증 | 결과 |
+|---|---|
+| 8채널 노드 생성 + 4스템 동시 출력 | 통과 — 4개 주파수 전부 검출 |
+| 베이스 솔로 (게인 `[0,1,0,0]`) | 통과 — 220Hz만 0.0591, 나머지 0.0003 이하 |
+| 베이스 2배 부스트 | 통과 — 에너지 비율 **정확히 2.00** |
+| 반배속 피치 유지 | 통과 — 220Hz 유지, 110Hz로 안 내려감 |
+| 반배속 길이 확장 | 통과 — 2초 소스가 4초로, 후반부 RMS 0.6995 |
+
+**4.1의 멀티채널 단일 스트레처 구조가 실증됐다.** PRD에서 유일하게 미검증으로
+남아 있던 기술 가정이었고, 폴백(스템별 스트레처 4개)은 불필요하다.
