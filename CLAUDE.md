@@ -10,6 +10,31 @@
 
 ---
 
+## 새 환경 준비 (클론 직후)
+
+`data/`는 gitignore 대상이라 비어 있다. 오디오·산출물·데이터셋은 직접 만들거나 받아야 한다.
+
+```bash
+# 1) Python 3.12 가상환경. 설치 순서가 중요하다 — apps/worker/requirements.txt 머리말 참조.
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+.venv/Scripts/python.exe -m pip install -r apps/worker/requirements.txt
+.venv/Scripts/python.exe -m pip install basic-pitch==0.4.0 --no-deps
+.venv/Scripts/python.exe -m pip install tuttut==0.0.6 --no-deps
+
+# 2) 웹
+cd apps/web && npm install && cd ../..
+cd tools && npm install && cd ..        # 검증기용
+
+# 3) 합성 픽스처 생성 (스모크 테스트용, 16초). 스윙판은 플래그가 따로 있다.
+.venv/Scripts/python.exe scripts/make_fixture.py
+.venv/Scripts/python.exe scripts/make_fixture.py --swing
+
+# 4) 정답 데이터셋 — 정확도를 재려면 필수. 아래 "측정" 절 참조.
+```
+
+`basic-pitch`와 `tuttut`을 `--no-deps`로 넣는 이유는 PRD 부록 A.1에 있다. Python 3.12에서 옛 numpy 핀을 소스 빌드하려다 깨진다.
+
 ## 실행
 
 ```bash

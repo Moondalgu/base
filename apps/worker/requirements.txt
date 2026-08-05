@@ -49,3 +49,7 @@ python-multipart==0.0.32
 # 평가
 mir_eval==0.8.2
 pretty_midi==0.2.11.post0
+
+# 정답 데이터셋(IDMT)의 XML 어노테이션 파싱. 표준 XML 파서는 외부 엔티티
+# 공격에 취약하므로 이쪽을 쓴다. 없으면 stdlib로 폴백하도록 되어 있다.
+defusedxml==0.7.1
