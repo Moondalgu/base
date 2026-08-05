@@ -53,9 +53,21 @@ cd apps/web && npm run build && npm start
 # 검증
 .venv/Scripts/python.exe eval/run_eval.py data/<hash> data/_fixture/truth.json
 .venv/Scripts/python.exe eval/eval_idmt.py --engine crepe        # 정답 데이터셋
+.venv/Scripts/python.exe eval/eval_practice.py                   # 연습 관점(거짓음·누락)
 cd apps/web && node ../../tools/validate_alphatex.mjs <file.alphatex>
 cd apps/web && node ../../tools/probe_clef.mjs <file.alphatex>
+
+# 표기 검토 — 표기 로직을 건드렸으면 이것부터
+.venv/Scripts/python.exe tools/diag/review_score.py data/<hash>/score.alphatex
+.venv/Scripts/python.exe tools/diag/review_shortnotes.py data/<hash>/score.alphatex
+.venv/Scripts/python.exe tools/diag/test_carry.py            # 마디 넘김 타이
+.venv/Scripts/python.exe tools/diag/test_quantize_cross.py   # 길이 보존·상한
+
+# 이미지·PDF 판독은 Gemini로 (base64가 컨텍스트에 안 들어간다)
+.venv/Scripts/python.exe tools/vision/gemini_vision.py <이미지|PDF> tools/vision/prompt_score.txt
 ```
+
+도구 설명은 `tools/diag/README.md`, `tools/vision/README.md`에 있다.
 
 CPU 소요(5분 곡): Demucs 약 450초 + CREPE 채보 약 480초 = **약 15분**. 정상이다.
 
