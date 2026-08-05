@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { StemPlayer, STEM_ORDER, type StemName } from "@/lib/player/engine";
+import { StemPlayer, stemUrls, type StemName } from "@/lib/player/engine";
 
 interface Row {
   name: string;
@@ -19,10 +19,11 @@ function rms(samples: Float32Array): number {
 
 /** 스템별 게인과 속도를 주고 오프라인 렌더링해 좌채널을 돌려준다 */
 async function render(
-  hash: string,
+  urls: Record<StemName, string>,
   gains: Partial<Record<StemName, number>>,
   rate: number,
   seconds: number,
+  startSec = 0,
 ): Promise<Float32Array> {
   const ctx = new OfflineAudioContext({
     numberOfChannels: 2,
@@ -30,15 +31,11 @@ async function render(
     sampleRate: SR,
   });
 
-  const urls = Object.fromEntries(
-    STEM_ORDER.map((n) => [n, `/api/artifacts/${hash}/stems/${n}.wav`]),
-  ) as Record<StemName, string>;
-
   const player = await StemPlayer.create({ urls, context: ctx });
   for (const [stem, value] of Object.entries(gains)) {
     player.setGain(stem as StemName, value as number);
   }
-  await player.prepareOffline(rate);
+  await player.prepareOffline(rate, startSec);
   const buf = await ctx.startRendering();
   return buf.getChannelData(0);
 }
@@ -59,7 +56,22 @@ export default function SelfTest({ hash }: { hash: string }) {
 
     (async () => {
       try {
-        const full = await render(hash, {}, 1, 6);
+        // 스템 확장자는 manifest가 결정한다 (필드가 없는 구버전은 wav)
+        let stemFormat: string | undefined;
+        let durationSec = 0;
+        const manifestRes = await fetch(`/api/artifacts/${hash}/manifest.json`);
+        if (manifestRes.ok) {
+          const m = await manifestRes.json();
+          stemFormat = m.stemFormat;
+          durationSec = m.source?.durationSec ?? 0;
+        }
+        const urls = stemUrls(hash, stemFormat);
+
+        // 실제 곡은 인트로에 베이스가 없는 경우가 흔하다 (이 검증이 처음 잡은
+        // 실패 사례: 인트로 24마디가 통째로 쉼표). 게인 검증은 곡 중간에서 한다.
+        const mid = Math.max(0, durationSec / 2 - 3);
+
+        const full = await render(urls, {}, 1, 6, mid);
         const rFull = rms(full);
         push({
           name: "4스템 전체 재생",
@@ -67,7 +79,7 @@ export default function SelfTest({ hash }: { hash: string }) {
           pass: rFull > 0.001,
         });
 
-        const bassOnly = await render(hash, { drums: 0, bass: 1, vocals: 0, other: 0 }, 1, 6);
+        const bassOnly = await render(urls, { drums: 0, bass: 1, vocals: 0, other: 0 }, 1, 6, mid);
         const rBass = rms(bassOnly);
         push({
           name: "베이스만 (솔로)",
@@ -75,7 +87,7 @@ export default function SelfTest({ hash }: { hash: string }) {
           pass: rBass > 0.001 && rBass < rFull,
         });
 
-        const noBass = await render(hash, { drums: 1, bass: 0, vocals: 1, other: 1 }, 1, 6);
+        const noBass = await render(urls, { drums: 1, bass: 0, vocals: 1, other: 1 }, 1, 6, mid);
         const rNoBass = rms(noBass);
         push({
           name: "베이스 빼고 (minus-one)",
@@ -83,7 +95,7 @@ export default function SelfTest({ hash }: { hash: string }) {
           pass: rNoBass > 0.001 && Math.abs(rNoBass - rBass) > rBass * 0.1,
         });
 
-        const boosted = await render(hash, { drums: 0, bass: 2, vocals: 0, other: 0 }, 1, 6);
+        const boosted = await render(urls, { drums: 0, bass: 2, vocals: 0, other: 0 }, 1, 6, mid);
         const ratio = rms(boosted) / rBass;
         push({
           name: "베이스 2배 부스트",
@@ -91,7 +103,7 @@ export default function SelfTest({ hash }: { hash: string }) {
           pass: ratio > 1.85 && ratio < 2.15,
         });
 
-        const muteAll = await render(hash, { drums: 0, bass: 0, vocals: 0, other: 0 }, 1, 6);
+        const muteAll = await render(urls, { drums: 0, bass: 0, vocals: 0, other: 0 }, 1, 6, mid);
         push({
           name: "전체 뮤트 시 무음",
           detail: `RMS ${rms(muteAll).toExponential(2)}`,
@@ -99,7 +111,7 @@ export default function SelfTest({ hash }: { hash: string }) {
         });
 
         // 반배속: 원본 6초 구간이 12초로 늘어나므로 후반부에도 소리가 있어야 한다
-        const slow = await render(hash, {}, 0.5, 12);
+        const slow = await render(urls, {}, 0.5, 12, mid);
         const tail = slow.slice(Math.floor(slow.length * 0.6));
         push({
           name: "반배속 — 길이 확장",

@@ -5,11 +5,11 @@ import {
   DEFAULT_GAINS,
   PRESETS,
   StemPlayer,
-  STEM_ORDER,
+  stemUrls,
   type Gains,
   type StemName,
 } from "@/lib/player/engine";
-import ScoreView from "./ScoreView";
+import ScoreView, { type ScoreControl } from "./ScoreView";
 import StemMixer from "./StemMixer";
 import TransportBar from "./TransportBar";
 
@@ -21,12 +21,15 @@ interface Manifest {
   noteCount?: number;
   tuning?: { preset?: string; midi?: number[] };
   quality?: { level?: "good" | "reference" | "failed"; score?: number };
+  /** 스템 파일 확장자. 없으면 wav (구버전 아티팩트) */
+  stemFormat?: string;
 }
 
 type Status = "loading" | "ready" | "error";
 
 export default function PlayerShell({ hash }: { hash: string }) {
   const playerRef = useRef<StemPlayer | null>(null);
+  const scoreControlRef = useRef<ScoreControl | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string>("");
   const [manifest, setManifest] = useState<Manifest | null>(null);
@@ -45,15 +48,16 @@ export default function PlayerShell({ hash }: { hash: string }) {
 
     (async () => {
       try {
+        let stemFormat: string | undefined;
         const manifestRes = await fetch(`/api/artifacts/${hash}/manifest.json`);
-        if (manifestRes.ok) setManifest(await manifestRes.json());
-
-        const urls = Object.fromEntries(
-          STEM_ORDER.map((name) => [name, `/api/artifacts/${hash}/stems/${name}.wav`]),
-        ) as Record<StemName, string>;
+        if (manifestRes.ok) {
+          const data: Manifest = await manifestRes.json();
+          setManifest(data);
+          stemFormat = data.stemFormat;
+        }
 
         player = await StemPlayer.create({
-          urls,
+          urls: stemUrls(hash, stemFormat),
           onPosition: (t) => {
             if (!disposed) setPosition(t);
           },
@@ -85,7 +89,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
     };
   }, [hash]);
 
-  /** alphaTab이 요청하는 재생/정지도 여기로 모은다 */
+  /** 엔진 직접 제어 — alphaTab의 handler.play/pause가 도착하는 곳 */
   const toggleTo = useCallback(async (shouldPlay: boolean) => {
     const player = playerRef.current;
     if (!player) return;
@@ -101,7 +105,16 @@ export default function PlayerShell({ hash }: { hash: string }) {
   const toggle = useCallback(async () => {
     const player = playerRef.current;
     if (!player) return;
-    await toggleTo(!player.playing);
+    const shouldPlay = !player.playing;
+    // 악보가 있으면 alphaTab을 경유한다 — alphaTab이 handler.play()로 엔진을
+    // 켜면서 자기 상태도 "재생 중"이 되어 커서가 움직인다. 엔진만 직접 켜면
+    // alphaTab은 정지 상태로 남아 어디를 연주 중인지 표시하지 않는다.
+    const scoreControl = scoreControlRef.current;
+    if (scoreControl) {
+      scoreControl.setPlaying(shouldPlay);
+      return;
+    }
+    await toggleTo(shouldPlay);
   }, [toggleTo]);
 
   const handleSeek = useCallback((seconds: number) => {
@@ -181,6 +194,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
       <ScoreView
         hash={hash}
         position={position}
+        controlRef={scoreControlRef}
         qualityLevel={manifest?.quality?.level}
         callbacks={{
           play: () => {

@@ -4,8 +4,8 @@
  * data/{contentHash}/ 아래 파일을 그대로 내보낸다.
  * 경로 탈출을 막기 위해 해석된 절대경로가 DATA_ROOT 안에 있는지 확인한다.
  *
- * TODO(M3): 스템을 wav 대신 opus로 인코딩해 전송량을 줄인다.
- *   5분 곡 스템 하나가 wav로는 50MB인데 opus면 5MB 수준이다.
+ * 스템은 파이프라인이 opus로 인코딩해 두고(pipeline/encode.py) 여기서는
+ * 확장자에 맞는 Content-Type으로 그대로 내보내기만 한다.
  */
 
 import { createReadStream, existsSync, statSync } from "node:fs";

@@ -19,4 +19,5 @@ __all__ = [
     "quantize",
     "separate",
     "transcribe",
+    "transcribe_crepe",
 ]

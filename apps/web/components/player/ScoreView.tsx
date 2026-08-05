@@ -9,18 +9,31 @@ import {
   type ExternalMediaBridge,
 } from "@/lib/player/alphatab";
 
+/**
+ * 부모(PlayerShell)가 재생/정지를 alphaTab 경유로 걸 수 있게 하는 핸들.
+ *
+ * 커서·비트 하이라이트는 alphaTab이 자신의 재생 상태가 "재생 중"일 때만
+ * 그린다. 엔진만 몰래 켜면 alphaTab은 정지 상태로 남아 커서가 죽는다.
+ * 그래서 UI 버튼은 alphaTab을 켜고, alphaTab이 handler를 통해 엔진을 켠다.
+ */
+export interface ScoreControl {
+  setPlaying(playing: boolean): void;
+}
+
 interface Props {
   hash: string;
   /** 재생 위치(초). 이 값이 바뀔 때마다 커서를 옮긴다 */
   position: number;
   callbacks: BridgeCallbacks;
+  /** 악보가 준비되면 여기에 재생 제어 핸들을 채워준다 (없으면 악보 미준비) */
+  controlRef?: React.MutableRefObject<ScoreControl | null>;
   /** 품질 점수 — 낮으면 경고 배너를 띄운다 */
   qualityLevel?: "good" | "reference" | "failed";
 }
 
 type Status = "loading" | "ready" | "empty" | "error";
 
-export default function ScoreView({ hash, position, callbacks, qualityLevel }: Props) {
+export default function ScoreView({ hash, position, callbacks, controlRef, qualityLevel }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
   const callbacksRef = useRef(callbacks);
@@ -56,9 +69,15 @@ export default function ScoreView({ hash, position, callbacks, qualityLevel }: P
             fontDirectory: `${ALPHATAB_BASE}/font/`,
           },
           display: {
-            // 탭 악보만. 오선보는 베이스 연습에 굳이 필요하지 않다.
-            staveProfile: alphaTab.StaveProfile.Tab,
+            // 통상적인 베이스 악보 형태: 오선보 + TAB 병기 (참고 영상들과 동일)
+            staveProfile: alphaTab.StaveProfile.ScoreTab,
+            // 행마다 마디 수가 들쭉날쭉하면 읽기 어렵다. 4마디씩 고정.
+            barsPerRow: 4,
             scale: 0.9,
+          },
+          notation: {
+            // TAB 줄 아래에 리듬 기둥을 그린다. 없으면 음표 길이를 알 수 없다.
+            rhythmMode: alphaTab.TabRhythmMode.ShowWithBars,
           },
           player: {
             // 외부 오디오(우리 StemPlayer)를 시간축으로 쓴다
@@ -94,6 +113,16 @@ export default function ScoreView({ hash, position, callbacks, qualityLevel }: P
               setStatus("error");
               return;
             }
+            if (controlRef) {
+              controlRef.current = {
+                setPlaying: (playing: boolean) => {
+                  // alphaTab을 켜면 alphaTab이 handler.play()로 엔진까지 켠다.
+                  // 이 경로여야 커서·하이라이트가 함께 움직인다.
+                  if (playing) api.play();
+                  else api.pause();
+                },
+              };
+            }
           }
           setStatus("ready");
         });
@@ -109,10 +138,13 @@ export default function ScoreView({ hash, position, callbacks, qualityLevel }: P
 
     return () => {
       disposed = true;
+      if (controlRef) controlRef.current = null;
       bridgeRef.current?.destroy();
       bridgeRef.current = null;
       api?.destroy?.();
     };
+    // controlRef는 ref 객체라 identity가 안 변한다 — hash에만 반응한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
 
   // 재생 위치를 alphaTab에 밀어넣는다. 부모가 50ms 주기로 갱신한다.

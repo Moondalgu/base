@@ -16,6 +16,12 @@ _YOUTUBE_PATTERNS = [
     re.compile(r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})"),
 ]
 
+# JS 런타임(deno 등)이 없으면 기본 클라이언트가 재생 URL을 못 받아 403이 난다.
+# android 클라이언트는 JS 런타임 없이도 재생 URL을 내려주므로 폴백으로 둔다.
+# None은 "기본 ydl_opts 그대로"를 의미한다. JS 런타임이 설치되면 기본이 더 좋은
+# 포맷(오디오 전용 등)을 주므로 항상 기본을 먼저 시도한다.
+PLAYER_CLIENT_FALLBACKS: tuple[str | None, ...] = (None, "android")
+
 
 def extract_video_id(url: str) -> str | None:
     for pattern in _YOUTUBE_PATTERNS:
@@ -53,16 +59,34 @@ class YoutubeAdapter(IngestionAdapter):
             )
 
         download_target = workdir / "download.%(ext)s"
-        opts = {
+        base_opts = {
             "format": "bestaudio/best",
             "outtmpl": str(download_target),
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
-            downloaded = Path(ydl.prepare_filename(info))
+
+        info = None
+        downloaded = None
+        for i, player_client in enumerate(PLAYER_CLIENT_FALLBACKS):
+            opts = dict(base_opts)
+            if player_client is not None:
+                print(f"[ingest] 기본 클라이언트 실패, {player_client}로 재시도")
+                opts["extractor_args"] = {"youtube": {"player_client": [player_client]}}
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(
+                        f"https://www.youtube.com/watch?v={video_id}", download=True
+                    )
+                    downloaded = Path(ydl.prepare_filename(info))
+                break
+            except yt_dlp.utils.DownloadError:
+                if i == len(PLAYER_CLIENT_FALLBACKS) - 1:
+                    raise
+                continue
+
+        assert info is not None and downloaded is not None
 
         to_wav(downloaded, wav_path)
         downloaded.unlink(missing_ok=True)

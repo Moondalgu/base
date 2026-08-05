@@ -47,6 +47,16 @@ async function loadSignalsmith(): Promise<SignalsmithStretchFn> {
 export const STEM_ORDER = ["drums", "bass", "vocals", "other"] as const;
 export type StemName = (typeof STEM_ORDER)[number];
 
+/**
+ * 파이프라인 산출물의 스템 URL 목록.
+ * 확장자는 manifest의 stemFormat을 따른다. 필드가 없는 구버전 아티팩트는 wav.
+ */
+export function stemUrls(hash: string, format = "wav"): Record<StemName, string> {
+  return Object.fromEntries(
+    STEM_ORDER.map((name) => [name, `/api/artifacts/${hash}/stems/${name}.${format}`]),
+  ) as Record<StemName, string>;
+}
+
 export type Gains = Record<StemName, number>;
 
 export const DEFAULT_GAINS: Gains = { drums: 1, bass: 1, vocals: 1, other: 1 };
@@ -94,6 +104,8 @@ export class StemPlayer {
   private _semitones = 0;
   private _gains: Gains = { ...DEFAULT_GAINS };
   private _loop: { start: number; end: number } | null = null;
+  /** 그래프 생성 전에 들어온 seek. 첫 play에서 반영한다 */
+  private _pendingSeek: number | null = null;
 
   private constructor(
     ctx: AudioContext | OfflineAudioContext,
@@ -125,11 +137,10 @@ export class StemPlayer {
   }
 
   /** 오프라인 렌더링용 — 그래프를 즉시 만들고 스케줄까지 건다 */
-  async prepareOffline(rate = 1): Promise<void> {
-    const stretch = await this.ensureGraph();
+  async prepareOffline(rate = 1, startSec = 0): Promise<void> {
+    await this.ensureGraph();
     this._rate = rate;
-    this.applySchedule({ active: true, input: 0 });
-    stretch.start(0);
+    this.applySchedule({ active: true, input: startSec });
     this._playing = true;
   }
 
@@ -145,6 +156,9 @@ export class StemPlayer {
     })) as StretchNode;
 
     await stretch.addBuffers(this.channels);
+    // 워크릿이 버퍼를 복사해 갔고 여기서 다시 쓸 일이 없다. 5분 곡 기준
+    // 디코딩된 PCM이 ~474MB라, 사본을 놓아줘야 메모리가 절반이 된다.
+    this.channels = [];
 
     const splitter = ctx.createChannelSplitter(STEM_ORDER.length * 2);
     const merger = ctx.createChannelMerger(2);
@@ -177,7 +191,7 @@ export class StemPlayer {
   }
 
   get position(): number {
-    return this.stretch?.inputTime ?? 0;
+    return this.stretch?.inputTime ?? this._pendingSeek ?? 0;
   }
 
   /** 그래프가 만들어졌는지 (첫 재생 이후 true) */
@@ -209,9 +223,16 @@ export class StemPlayer {
     // 브라우저 자동재생 정책 — 사용자 제스처 이후에만 resume이 통한다.
     // resume을 먼저 해야 워크릿이 돌기 시작하고, 그래야 addBuffers가 완료된다.
     if (this.ctx.state === "suspended") await this.ctx.resume();
-    const stretch = await this.ensureGraph();
-    this.applySchedule({ active: true });
-    stretch.start();
+    await this.ensureGraph();
+    // 그래프 생성 전에 사용자가(또는 alphaTab이) 옮겨둔 위치가 있으면 거기서 시작.
+    // stretch.start()는 쓰지 않는다 — 벤더의 start()는 schedule({input: 0, ...})의
+    // 설탕이라, 일시정지 후 재개할 때마다 곡 처음으로 되감아 버린다.
+    this.applySchedule(
+      this._pendingSeek !== null
+        ? { active: true, input: this._pendingSeek }
+        : { active: true },
+    );
+    this._pendingSeek = null;
     this._playing = true;
   }
 
@@ -222,6 +243,12 @@ export class StemPlayer {
 
   seek(seconds: number): void {
     const clamped = Math.max(0, Math.min(seconds, this._duration));
+    if (!this.stretch) {
+      // applySchedule은 그래프가 없으면 무시된다. rate·gain과 달리 seek 위치는
+      // 필드에 안 남으므로 여기서 따로 기억해뒀다가 첫 play에서 반영한다.
+      this._pendingSeek = clamped;
+      return;
+    }
     this.applySchedule({ active: this._playing, input: clamped });
   }
 

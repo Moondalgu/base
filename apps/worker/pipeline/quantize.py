@@ -19,6 +19,10 @@ DEFAULT_SUBDIVISION = 4      # 비트당 슬롯 수. 4 = 16분음표 그리드
 SWING_SUBDIVISION = 3        # 스윙이면 3등분(셋잇단)
 SNAP_REJECT_RATIO = 0.5      # 그리드 간격의 이 비율을 넘게 벗어나면 저신뢰
 MIN_DURATION_SLOTS = 1
+# 스윙은 비트 그리드가 안정할 때만 추론할 수 있다. 비트 간격이 흔들리면
+# "온셋이 박 안에서 어디에 있는지"라는 통계 자체가 신뢰할 수 없어져,
+# 스트레이트 곡을 셋잇단으로 적어버린다.
+SWING_MAX_BPM_VARIANCE = 0.05
 
 
 @dataclass
@@ -316,7 +320,12 @@ def _detect_swing(notes: list[Note], grid: BeatGrid) -> bool:
     """비트 내 온셋 위치 분포로 스윙을 판정한다.
 
     스트레이트면 온셋이 0.0/0.5 근처, 스윙이면 0.0/0.66 근처에 모인다.
+    단, 비트 간격이 불안정한 곡(bpm_variance가 높은 곡)은 온셋의 박 내
+    상대위치 자체가 흔들리므로 이 통계를 신뢰할 수 없어 판정에서 제외한다.
     """
+    if grid.bpm_variance > SWING_MAX_BPM_VARIANCE:
+        return False
+
     beats = grid.beats
     if len(beats) < 4 or len(notes) < 8:
         return False

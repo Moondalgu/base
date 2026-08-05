@@ -155,6 +155,11 @@ def _notes_from_alphatex(tex: str, manifest: dict, grid) -> list[tuple[float, in
                 continue
             if len(parts) != 3:
                 continue
+            if parts[0] == "-":
+                # 타이(-.현.길이)는 앞 음의 연장이다. 새 온셋이 아니므로 세지 않고
+                # 슬롯 커서만 밀어 뒤 음의 시각을 맞춘다.
+                slot += slots_of(parts[2], subdivision)
+                continue
             fret, string = int(parts[0]), int(parts[1])
             pitch = tuning[string - 1] + fret
             if slot < len(slot_times[bar_idx]):

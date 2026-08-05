@@ -20,15 +20,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from pipeline import alphatex, bassclean, beats, fretting, quality, quantize, separate, transcribe
+from pipeline import (
+    alphatex, bassclean, beats, encode, fretting, quality, quantize, separate,
+    transcribe, transcribe_crepe,
+)
 from pipeline.ingest import ingest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DATA = ROOT / "data"
 
+# 웹 경로의 채보 엔진. crepe는 프레임당 피치가 하나라 배음 거짓 음을
+# 만들지 않는다(정답 데이터셋 거짓 음 22.8% -> 10.5%).
+DEFAULT_ENGINE = "crepe"
+
 STAGES = [
     ("ingest", "오디오 준비"),
     ("separate", "악기 분리"),
+    ("encode", "전송용 인코딩"),
     ("beats", "박자 분석"),
     ("transcribe", "음 검출"),
     ("bassclean", "베이스 정리"),
@@ -127,10 +135,25 @@ async def _run(job: Job) -> None:
                    durationSec=round(info.duration_sec, 2))
 
         stems = await run_stage("separate", separate.separate, info.wav_path, workdir)
-        grid = await run_stage("beats", beats.track_beats, info.wav_path, workdir)
-        note_events = await run_stage("transcribe", transcribe.transcribe, stems["bass"])
+        # 파이프라인은 wav를 계속 쓰고, 브라우저는 opus만 받는다 (encode.py 주석)
+        await run_stage("encode", encode.encode_stems, stems)
+        # 비트는 믹스에서 잡고, 마디 시작 위상은 베이스 스템으로 맞춘다.
+        grid = await run_stage(
+            "beats", beats.track_beats, info.wav_path, workdir,
+            phase_source=stems.get("bass"),
+        )
+        # 엔진에 따라 뒷단 후처리가 갈린다. crepe 출력에는 배음 거짓 음도
+        # 조각도 없어서 배음 제거·단선율 강제·병합이 실제 음만 깎는다.
+        monophonic = DEFAULT_ENGINE == "crepe"
+        engine_fn = transcribe_crepe.transcribe if monophonic else transcribe.transcribe
+        note_events = await run_stage("transcribe", engine_fn, stems["bass"])
 
-        cleaned, clean_report = await run_stage("bassclean", bassclean.clean, note_events)
+        cleaned, clean_report = await run_stage(
+            "bassclean",
+            bassclean.clean,
+            note_events,
+            monophonic_source=monophonic,
+        )
         qscore = await run_stage("quantize", quantize.quantize, cleaned, grid)
         fscore = await run_stage("fretting", fretting.assign, qscore, job.tuning)
 
@@ -163,7 +186,12 @@ async def _run(job: Job) -> None:
             "status": "done",
             "stages": stages,
             "stems": sorted(stems),
+            # 플레이어가 스템 URL 확장자를 정할 때 읽는다. 없으면 wav로 간주(구버전).
+            "stemFormat": "opus",
             "instrument": "bass",
+            # 어느 채보 엔진으로 만든 악보인지 남긴다. 엔진마다 거짓 음·누락
+            # 성향이 달라서, 나중에 결과를 볼 때 이 값 없이는 해석이 안 된다.
+            "engine": DEFAULT_ENGINE,
             "tuning": {
                 "preset": fscore.tuning_name,
                 "midi": fscore.tuning,

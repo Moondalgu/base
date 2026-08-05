@@ -20,7 +20,10 @@ demucs==4.1.0
 # 비트·다운비트
 beat-this==1.1.0
 
-# 채보 런타임 (basic-pitch를 ONNX로 돌린다)
+# 채보 — 기본 엔진. PyTorch 기반이라 TF·madmom을 끌어오지 않는다.
+torchcrepe==0.0.24
+
+# 채보 런타임 (basic-pitch를 ONNX로 돌린다. 비교용 엔진으로 계속 남긴다)
 onnxruntime==1.28.0
 librosa==0.11.0
 resampy==0.4.3

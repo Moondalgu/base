@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "worker"))
 
 from pipeline import (  # noqa: E402
-    alphatex, bassclean, beats, fretting, quality, quantize, separate, transcribe,
+    alphatex, bassclean, beats, encode, fretting, quality, quantize, separate,
+    transcribe, transcribe_crepe,
 )
 from pipeline.ingest import ingest  # noqa: E402
 
@@ -37,6 +38,10 @@ def main() -> int:
         help="입력이 이미 베이스 단독 음원일 때 Demucs를 건너뛴다",
     )
     parser.add_argument("--no-sync", action="store_true", help="sync 포인트 생략")
+    parser.add_argument(
+        "--engine", default="crepe", choices=["crepe", "basic-pitch"],
+        help="채보 엔진. crepe가 기본(거짓 음 22.8%%→10.5%%)",
+    )
     parser.add_argument(
         "--beat-source",
         help="비트 추적에 쓸 별도 오디오. --skip-separate로 베이스 단독 파일을 넣을 때 "
@@ -56,6 +61,7 @@ def main() -> int:
 
     # 2) 스템 분리
     if args.skip_separate:
+        stems = None
         bass_stem = info.wav_path
         stages["separate"] = {"status": "skipped", "ms": 0}
         print("[separate] 건너뜀 (입력을 베이스 스템으로 취급)")
@@ -65,22 +71,35 @@ def main() -> int:
         bass_stem = stems["bass"]
         stages["separate"] = _done(t)
 
+        # 브라우저 전송용 opus. 파이프라인 내부는 계속 wav를 쓴다 (encode.py 주석)
+        t = time.monotonic()
+        encode.encode_stems(stems)
+        stages["encode"] = _done(t)
+
     # 3) 비트 추적 — 원본 믹스에 적용한다 (드럼이 있어야 비트가 잡힌다)
     t = time.monotonic()
     beat_input = Path(args.beat_source) if args.beat_source else info.wav_path
     if args.beat_source:
         print(f"[beats] 별도 소스 사용: {beat_input.name}")
-    grid = beats.track_beats(beat_input, workdir)
+    # 위상 피팅은 베이스로 한다. --skip-separate면 입력 자체가 베이스 스템이다.
+    grid = beats.track_beats(beat_input, workdir, phase_source=bass_stem)
     stages["beats"] = _done(t)
 
-    # 4) 채보
+    # 4) 채보 — 엔진에 따라 뒷단 후처리 방식이 달라진다.
+    #    crepe는 프레임당 피치가 하나라 배음 거짓 음을 만들지 않는다.
     t = time.monotonic()
-    note_events = transcribe.transcribe(bass_stem, verbose=True)
+    monophonic = args.engine == "crepe"
+    engine_fn = transcribe_crepe.transcribe if monophonic else transcribe.transcribe
+    note_events = engine_fn(bass_stem, verbose=True)
     stages["transcribe"] = _done(t)
 
     # 5) 베이스 후처리
     t = time.monotonic()
-    cleaned, clean_report = bassclean.clean(note_events, verbose=True)
+    cleaned, clean_report = bassclean.clean(
+        note_events,
+        verbose=True,
+        monophonic_source=monophonic,
+    )
     stages["bassclean"] = _done(t)
 
     # 6) 양자화
@@ -147,6 +166,11 @@ def main() -> int:
         "status": "done",
         "stages": stages,
         "instrument": "bass",
+        # 어느 채보 엔진으로 만든 악보인지 남긴다. 엔진마다 거짓 음·누락
+        # 성향이 달라서, 나중에 결과를 볼 때 이 값 없이는 해석이 안 된다.
+        "engine": args.engine,
+        # --skip-separate면 스템이 없어 플레이어를 못 쓴다. 키 자체를 빼서 표시한다.
+        **({"stems": sorted(stems), "stemFormat": "opus"} if stems else {}),
         "tuning": {
             "preset": fscore.tuning_name,
             "midi": fscore.tuning,
