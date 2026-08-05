@@ -65,6 +65,14 @@ _DURATION_TABLES: dict[int, list[tuple[int, str, int]]] = {
 }
 
 
+# 검출된 물리적 길이를 그대로 적으면 스타카토가 16분음표+16분쉼표로 쪼개진다.
+# 악보 관습은 리듬 값을 적고 길이는 아티큘레이션에 맡기는 것이다(PRD 4.8에서
+# 주법은 표기하지 않기로 했으므로 더욱 그렇다). 음보다 짧거나 같은 쉼표는
+# 그 음의 리듬 값 안으로 흡수한다. 음보다 긴 쉼표는 연주자가 실제로 쉬는
+# 구간이므로 그대로 적는다.
+ABSORB_REST_UP_TO_NOTE_LENGTH = True
+
+
 def _duration_table(subdivision: int) -> list[tuple[int, str, int]]:
     table = _DURATION_TABLES.get(subdivision)
     if table is None:
@@ -134,7 +142,13 @@ def build(
     lines.append(f"\\ts {score.beats_per_bar} 4")
     lines.append("")
 
-    bar_texts = [_render_bar(bar, score.subdivision) for bar in score.bars]
+    # 마디를 넘는 음은 앞 마디 끝에서 자르지 않고 다음 마디 앞머리에 타이로 잇는다.
+    # 그래서 마디를 순회하며 잔여 길이(carry)를 들고 다녀야 한다.
+    bar_texts: list[str] = []
+    carry: tuple[int, int] | None = None
+    for bar in score.bars:
+        text, carry = _render_bar(bar, score.subdivision, carry_in=carry)
+        bar_texts.append(text)
     lines.append(" |\n".join(bar_texts))
 
     if include_sync:
@@ -153,41 +167,69 @@ def _tuning_names(tuning: list[int]) -> str:
     return " ".join(pretty_midi.note_number_to_name(p) for p in reversed(tuning))
 
 
-def _render_bar(bar: FrettedBar, subdivision: int) -> str:
-    """마디 하나를 AlphaTex 토큰 열로 적는다.
+def _render_bar(
+    bar: FrettedBar,
+    subdivision: int,
+    carry_in: tuple[int, int] | None = None,
+) -> tuple[str, tuple[int, int] | None]:
+    """마디 하나를 AlphaTex 토큰 열로 적는다. 반환 (토큰 문자열, carry_out).
 
     음 하나의 길이를 한 토큰으로 못 적으면 박 경계에서 잘라 타이(-)로 잇는다.
     표기 가능한 길이 후보를 큰 것부터 훑어 정렬 규칙(_DURATION_TABLES의 align)을
     통과하는 첫 길이를 쓰고, 남은 만큼을 같은 방식으로 이어 붙인다.
     쉼표도 같은 규칙으로 쪼갠다(타이가 없으므로 전부 r.* 토큰이다).
 
-    음의 실제 길이가 그대로 악보에 남는다. 쉼표는 음이 실제로 쉬는 구간에만
-    나오므로 음 중간에 쉼표가 끼어들지 않는다.
+    carry_in/carry_out은 (현 번호, 남은 슬롯)이다. 마디를 넘는 음은 앞 마디에서
+    자르지 않고 여기서 받아 마디 앞머리에 타이 토큰으로 먼저 적는다. carry가
+    걸린 구간에는 다른 음이 올 수 없다(단선율) — 겹치면 carry를 우선하고 겹치는
+    음은 건너뛴다.
+
+    쉼표는 음이 실제로 쉬는 구간에만 나온다. 단, 음보다 짧거나 같은 쉼표는
+    앞 음의 리듬 값에 흡수해서 악보가 잘게 쪼개지지 않게 한다
+    (ABSORB_REST_UP_TO_NOTE_LENGTH 참조).
     """
     table = _duration_table(subdivision)
     tokens: list[str] = []
     pos = 0
+    carry_out: tuple[int, int] | None = None
+
+    # 앞 마디에서 넘어온 음을 마디 앞머리에 타이로 잇는다.
+    if carry_in is not None:
+        carry_string, carried = carry_in
+        span = min(carried, bar.slots_per_bar)
+        tokens.extend(_ties(0, span, carry_string, table))
+        pos = span
+        if carried > span:
+            # 이 마디를 다 덮고도 남았다. 그대로 다음 마디로 넘긴다.
+            return " ".join(tokens), (carry_string, carried - span)
 
     # 음은 슬롯 순서로 처리하고 pos는 뒤로 가지 않는다. 그래서 음과 음 사이의
     # 빈 구간은 이미 "연속된 쉼표 구간 전체"다. 따로 합산할 필요가 없다.
-    for note in sorted(bar.notes, key=lambda n: n.slot):
+    notes = sorted(bar.notes, key=lambda n: n.slot)
+    for i, note in enumerate(notes):
         if note.slot < pos:
-            continue  # 단선율 전제 위반. 앞 음을 존중하고 건너뛴다.
+            continue  # 단선율 전제 위반. 앞 음(또는 carry)을 존중하고 건너뛴다.
+        if note.slot >= bar.slots_per_bar:
+            continue  # 마디 밖 슬롯. 방어적 처리.
         if note.slot > pos:
             tokens.extend(_rests(pos, note.slot - pos, table))
             pos = note.slot
 
-        # 마디를 넘는 음은 마디 끝에서 자른다. 문법상 마디 넘김 타이도 가능하지만
-        # (0.4.4 0.4.4 0.4.2 | -.4.4 ... 형태를 파서로 확인) 여기서는 쓰지 않는다.
-        remaining = min(note.duration_slots, bar.slots_per_bar - pos)
-        if remaining <= 0:
-            continue
+        remaining = note.duration_slots
+        # 이 음 다음에 오는 빈 구간(다음 음의 슬롯까지, 없으면 마디 끝까지)
+        next_slot = notes[i + 1].slot if i + 1 < len(notes) else bar.slots_per_bar
+        remaining += _absorbable(remaining, pos, next_slot, table)
 
         # alphaTab 현 번호는 1부터, 가장 얇은 현이 1번
         string = note.string + 1
         first = True
         while remaining > 0:
-            size, duration = _largest_fitting(remaining, pos, table)
+            room = bar.slots_per_bar - pos
+            if room <= 0:
+                # 마디를 넘겼다. 남은 길이는 다음 마디가 타이로 받는다.
+                carry_out = (string, remaining)
+                break
+            size, duration = _largest_fitting(min(remaining, room), pos, table)
             prefix = f"{note.fret}.{string}" if first else f"-.{string}"
             tokens.append(f"{prefix}.{duration}")
             first = False
@@ -200,7 +242,42 @@ def _render_bar(bar: FrettedBar, subdivision: int) -> str:
     # 음이 하나도 없는 마디도 박자만큼 쉼표로 채워야 alphaTab이 마디 길이를 맞춘다
     if not tokens:
         tokens = _rests(0, bar.slots_per_bar, table)
-    return " ".join(tokens)
+    return " ".join(tokens), carry_out
+
+
+def _absorbable(
+    note_slots: int, pos: int, next_slot: int, table: list[tuple[int, str, int]]
+) -> int:
+    """음 뒤 빈 구간에서 음길이에 흡수할 슬롯 수. 흡수하지 않으면 0.
+
+    조건 두 개를 모두 만족해야 흡수한다.
+      1) 빈 구간이 음길이보다 짧거나 같다 — 음보다 긴 쉼표는 진짜 쉼표다.
+         (16분음표 뒤 8분쉼표는 흡수하지 않는다)
+      2) 흡수하면 토큰 수가 줄어든다 — 예를 들어 홀수 슬롯의 16분음표는
+         정렬 규칙 때문에 8분음표로 못 적어서 '16분 + 타이 16분'이 되는데,
+         '16분 + 16분쉼표'와 토큰 수가 같으면서 읽기는 더 나쁘다.
+    """
+    if not ABSORB_REST_UP_TO_NOTE_LENGTH:
+        return 0
+    gap = next_slot - (pos + note_slots)
+    if gap <= 0 or gap > note_slots:
+        return 0
+    merged = _token_count(note_slots + gap, pos, table)
+    separate = _token_count(note_slots, pos, table) + _token_count(gap, pos + note_slots, table)
+    return gap if merged < separate else 0
+
+
+def _token_count(slots: int, pos: int, table: list[tuple[int, str, int]]) -> int:
+    """슬롯 pos에서 slots만큼을 적는 데 필요한 토큰 수(정렬 규칙 분해 기준)."""
+    count = 0
+    remaining = slots
+    cursor = pos
+    while remaining > 0:
+        size, _ = _largest_fitting(remaining, cursor, table)
+        count += 1
+        cursor += size
+        remaining -= size
+    return count
 
 
 def _rests(pos: int, slots: int, table: list[tuple[int, str, int]]) -> list[str]:
@@ -214,6 +291,21 @@ def _rests(pos: int, slots: int, table: list[tuple[int, str, int]]) -> list[str]
     while remaining > 0:
         size, duration = _largest_fitting(remaining, cursor, table)
         out.append(f"r.{duration}")
+        cursor += size
+        remaining -= size
+    return out
+
+
+def _ties(
+    pos: int, slots: int, string: int, table: list[tuple[int, str, int]]
+) -> list[str]:
+    """슬롯 pos부터 slots만큼을 타이 토큰으로 채운다 (앞 마디에서 넘어온 음)."""
+    out: list[str] = []
+    remaining = slots
+    cursor = pos
+    while remaining > 0:
+        size, duration = _largest_fitting(remaining, cursor, table)
+        out.append(f"-.{string}.{duration}")
         cursor += size
         remaining -= size
     return out

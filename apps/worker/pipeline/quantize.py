@@ -19,6 +19,12 @@ DEFAULT_SUBDIVISION = 4      # 비트당 슬롯 수. 4 = 16분음표 그리드
 SWING_SUBDIVISION = 3        # 스윙이면 3등분(셋잇단)
 SNAP_REJECT_RATIO = 0.5      # 그리드 간격의 이 비율을 넘게 벗어나면 저신뢰
 MIN_DURATION_SLOTS = 1
+# 한 음이 차지할 수 있는 최대 마디 수. 마디 경계에서 자르지 않으므로 상한이 필요하다.
+# 곡 끝의 여운이나 피치 검출 실패로 note.end가 크게 뒤로 밀리면 한 음의
+# duration_slots가 수십 마디로 늘어나고, alphatex가 그 구간을 전부 타이로 덮어
+# 뒤에 오는 음들이 악보에서 통째로 사라진다. 4마디는 온음표 네 개 분량으로,
+# 실제 베이스 라인에서 이보다 긴 한 음은 사실상 없다.
+MAX_DURATION_BARS = 4
 # 스윙은 비트 그리드가 안정할 때만 추론할 수 있다. 비트 간격이 흔들리면
 # "온셋이 박 안에서 어디에 있는지"라는 통계 자체가 신뢰할 수 없어져,
 # 스트레이트 곡을 셋잇단으로 적어버린다.
@@ -107,10 +113,14 @@ def quantize(
         duration_slots = max(MIN_DURATION_SLOTS, end_idx - idx)
 
         bar = bars[bar_idx]
-        # 마디를 넘기는 음은 마디 끝에서 자른다. 마디 간 타이는 MVP 범위 밖.
-        duration_slots = min(duration_slots, bar.slots_per_bar - slot)
-        if duration_slots < MIN_DURATION_SLOTS:
+        # 그리드 마지막 항목은 마지막 마디의 끝 경계(slot == slots_per_bar)다.
+        # 실제 슬롯이 아니므로 여기 스냅된 음은 버린다.
+        if slot >= bar.slots_per_bar:
             continue
+        # 마디를 넘기는 음도 실제 길이를 그대로 남긴다. 여기서 자르면 마디 넘김
+        # 정보가 alphatex까지 도달하지 못해 이어진 음이 마디 끝에서 끊긴다.
+        # 마디 경계 처리(타이 분할)는 마디 구조를 아는 alphatex가 담당한다.
+        duration_slots = min(duration_slots, bar.slots_per_bar * MAX_DURATION_BARS)
 
         bar.notes.append(
             QuantizedNote(

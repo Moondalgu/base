@@ -57,38 +57,42 @@ def _notes_by_bar(tex: str, manifest: dict) -> dict[int, dict]:
     body = " ".join(body_lines)
 
     out: dict[int, dict] = {}
+    # 직전 어택의 위치 (마디번호, 슬롯). 타이(-.현.길이)를 만나면 이 어택의 길이에
+    # 더한다. 마디 넘김 타이는 마디 첫 토큰으로 오고 **앞 마디 마지막 어택**의
+    # 연장이므로, 마디마다 초기화하면 그 길이가 사라져 durSlots가 짧게 나온다.
+    last_ref: tuple[int, int] | None = None
     for bar_idx, bar_text in enumerate(body.split("|")):
         if not bar_text.strip():
             continue
         bar_num = bar_idx + 1  # 정답 파일과 맞춰 1부터
         slot = 0
-        attacks: dict[int, tuple[int, int]] = {}
-        # 직전 어택의 슬롯. 타이(-.현.길이)를 만나면 이 어택의 길이에 더한다.
-        # 마디를 넘는 타이는 생성 쪽에서 쓰지 않으므로 마디마다 초기화한다.
-        last_slot: int | None = None
+        out[bar_num] = {"attacks": {}, "total_slots": 0}
+        attacks: dict[int, tuple[int, int]] = out[bar_num]["attacks"]
         for token in _tokens(bar_text):
             parts = token.split(".")
             if parts[0] == "r":
                 slot += slots_of(parts[1], subdivision)
-                last_slot = None  # 쉼표 뒤에는 이어줄 음이 없다
+                last_ref = None  # 쉼표 뒤에는 이어줄 음이 없다
                 continue
             if len(parts) != 3:
                 continue
             dur = slots_of(parts[2], subdivision)
             if parts[0] == "-":
                 # 타이는 새 어택이 아니다. 앞 음이 그만큼 길게 울린다는 표기이므로
-                # 어택 수를 늘리지 않고 durSlots에만 더한다.
-                if last_slot is not None:
-                    prev_pitch, prev_dur = attacks[last_slot]
-                    attacks[last_slot] = (prev_pitch, prev_dur + dur)
+                # 어택 수를 늘리지 않고 durSlots에만 더한다. 마디를 넘어온 타이는
+                # 앞 마디에 기록된 어택을 찾아 더한다.
+                if last_ref is not None:
+                    ref_bar, ref_slot = last_ref
+                    prev_pitch, prev_dur = out[ref_bar]["attacks"][ref_slot]
+                    out[ref_bar]["attacks"][ref_slot] = (prev_pitch, prev_dur + dur)
                 slot += dur
                 continue
             fret, string = int(parts[0]), int(parts[1])
             pitch = tuning[string - 1] + fret
             attacks[slot] = (pitch, dur)
-            last_slot = slot
+            last_ref = (bar_num, slot)
             slot += dur
-        out[bar_num] = {"attacks": attacks, "total_slots": slot}
+        out[bar_num]["total_slots"] = slot
     return out
 
 

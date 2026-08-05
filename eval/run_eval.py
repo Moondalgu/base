@@ -158,6 +158,8 @@ def _notes_from_alphatex(tex: str, manifest: dict, grid) -> list[tuple[float, in
             if parts[0] == "-":
                 # 타이(-.현.길이)는 앞 음의 연장이다. 새 온셋이 아니므로 세지 않고
                 # 슬롯 커서만 밀어 뒤 음의 시각을 맞춘다.
+                # 마디 첫 토큰이 타이인 경우(앞 마디에서 넘어온 음)도 같다. 그 음의
+                # 어택은 앞 마디에서 이미 셌으므로 여기서는 커서만 밀면 된다.
                 slot += slots_of(parts[2], subdivision)
                 continue
             fret, string = int(parts[0]), int(parts[1])
