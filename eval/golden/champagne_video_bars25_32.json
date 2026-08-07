@@ -1,0 +1,34 @@
+{
+  "_readme": [
+    "Champagne Supernova 커버 영상의 화면 악보에서 읽은 운지 정답 8마디.",
+    "영상 마디 25~32 = 우리 마디 27~34 (ourBarOffset 2).",
+    "",
+    "**타현 기준이다.** 화면 TAB에는 마디당 숫자가 6개지만 곡선(타이)으로 이어져",
+    "실제로 뜯는 것은 3회다. 음표 머리를 세면 두 배로 잡힌다 —",
+    "harmony.json의 articulation.comparisonRule 참조.",
+    "",
+    "판독: Gemini 3.1 Pro vision, 프레임 2장(t=84.85s, 97.65s), 타현/타이 분리 프롬프트.",
+    "두 시스템이 같은 진행을 반복하며 판독 결과도 일치했다.",
+    "",
+    "**이 정답이 쓸 수 있는 이유**: 음량 게이트로 큰 소리 쪽(커버 연주)만 남기면",
+    "우리 출력과 화면 악보가 같은 연주자를 가리킨다. 게이트 이전에는 두 베이스가",
+    "섞여 있어 이 대조가 성립하지 않았고, CLAUDE.md에 '어택 개수 평가에 쓰지 마라'고",
+    "적어두었다. 그 금지는 게이트 도입으로 해제된다.",
+    "",
+    "현 번호는 **알파텍스 표기 기준**(1=G 가장 얇은 현, 4=E 가장 두꺼운 현).",
+    "우리 내부 index로는 string-1이다."
+  ],
+  "source": "https://www.youtube.com/watch?v=AYKkRsrEpX8",
+  "ourBarOffset": 2,
+  "attacksPerBar": 3,
+  "bars": [
+    { "videoBar": 25, "ourBar": 27, "string": 4, "fret": 0, "pitch": 28, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 26, "ourBar": 28, "string": 3, "fret": 5, "pitch": 38, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 27, "ourBar": 29, "string": 3, "fret": 4, "pitch": 37, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 28, "ourBar": 30, "string": 3, "fret": 2, "pitch": 35, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 29, "ourBar": 31, "string": 4, "fret": 0, "pitch": 28, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 30, "ourBar": 32, "string": 3, "fret": 5, "pitch": 38, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 31, "ourBar": 33, "string": 3, "fret": 4, "pitch": 37, "attacks": 3, "writtenNotes": 6 },
+    { "videoBar": 32, "ourBar": 34, "string": 3, "fret": 2, "pitch": 35, "attacks": 3, "writtenNotes": 6 }
+  ]
+}

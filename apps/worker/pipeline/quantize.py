@@ -15,9 +15,32 @@ from dataclasses import dataclass, field
 from .bassclean import Note
 from .beats import BeatGrid
 
-DEFAULT_SUBDIVISION = 4      # 비트당 슬롯 수. 4 = 16분음표 그리드
+# 격자 자동 선택(choose_subdivision)이 실패할 때만 쓰는 **폴백**이다.
+# 16분은 대중음악의 통상 최소 단위다.
+DEFAULT_SUBDIVISION = 4      # 비트당 슬롯 수. 4 = 16분음표 그리드. 판정 불가일 때의 값
+# 스윙은 8분 셋잇단 구조다.
 SWING_SUBDIVISION = 3        # 스윙이면 3등분(셋잇단)
+
+# 스트레이트 곡의 격자는 고정하지 않고 온셋을 보고 고른다. 16분에 고정하면
+# 8분음표 위의 미세한 흔들림이 옆 16분 슬롯에 얹혀 악보가 두 배로 촘촘해지고,
+# 8분에 고정하면 진짜 16분을 쓰는 곡의 리듬이 뭉개진다.
+#
+# 임계값 근거 — IDMT 정답 17곡(정답 악보 + 정답 비트)에서 두 군이 겹치지 않는다.
+#   정답 악보에 16분음표가 없는 8곡: 이 비율이 0.0~2.4%
+#   16분음표를 쓰는 9곡:            9.1~40.0%
+# 5%를 두면 17곡을 정확히 가른다. eval/eval_grid_resolution.py로 재현할 수 있다.
+SIXTEENTH_REQUIRED_RATIO = 0.05
+
+# 온셋이 8분 자리(0, 0.5박)에 얹혔다고 인정하는 여유. 16분 간격의 절반이다 —
+# 이보다 가까우면 8분 위의 연주 흔들림과 구분되지 않는다.
+EIGHTH_TOLERANCE = 0.125
+
+# 격자를 판정하려면 최소 이만큼의 온셋이 필요하다. 이보다 적으면 통계가
+# 성립하지 않으므로 DEFAULT_SUBDIVISION을 쓴다(잘게 적는 쪽이 안전하다).
+MIN_NOTES_FOR_GRID_CHOICE = 12
+# 격자 간격의 절반보다 멀면 그 격자 자리가 아니다 — 퀀타이즈의 논리적 기준.
 SNAP_REJECT_RATIO = 0.5      # 그리드 간격의 이 비율을 넘게 벗어나면 저신뢰
+# 양자화된 음은 최소 한 슬롯을 차지한다.
 MIN_DURATION_SLOTS = 1
 # 한 음이 차지할 수 있는 최대 마디 수. 마디 경계에서 자르지 않으므로 상한이 필요하다.
 # 곡 끝의 여운이나 피치 검출 실패로 note.end가 크게 뒤로 밀리면 한 음의
@@ -36,9 +59,12 @@ class QuantizedNote:
     slot: int                # 마디 내 슬롯 인덱스 (0부터)
     duration_slots: int
     pitch: int
-    amplitude: float
+    amplitude: float         # CREPE 확신도. 음량이 아니다
     residual: float          # |원래온셋 - 스냅위치| / 그리드간격
     low_confidence: bool
+    # 실제 음량(RMS). 하향에서 "이 마디에서 가장 센 엇박"을 찾을 때 쓴다 —
+    # 확신도로는 셈이 되지 않는다(둘의 상관계수가 -0.20이다).
+    loudness: float = 0.0
 
 
 @dataclass
@@ -66,6 +92,9 @@ class QuantizedScore:
     # 이 값 없이는 산출물에서 마디 시각을 재구성할 수 없어 평가가 틀어진다.
     phase: int = 0
     phase_corrected: bool = False
+    # 16분 격자를 요구한 온셋의 비율. 격자를 왜 그렇게 골랐는지 남기는 값이다.
+    # 이 값 없이 subdivision만 보면 판정 근거를 되짚을 수 없다.
+    sixteenth_ratio: float = 0.0
 
 
 def quantize(
@@ -84,10 +113,14 @@ def quantize(
         raise ValueError("비트 그리드가 부족합니다. 비트 추적 결과를 확인하세요.")
 
     swing = _detect_swing(notes, grid)
+    sixteenth_ratio = 0.0
     if force_subdivision is not None:
         subdivision = force_subdivision
+    elif swing:
+        # 셋잇단 격자에는 8분/16분 구분이 없다. 스윙 판정이 먼저다.
+        subdivision = SWING_SUBDIVISION
     else:
-        subdivision = SWING_SUBDIVISION if swing else DEFAULT_SUBDIVISION
+        subdivision, sixteenth_ratio = choose_subdivision(notes, grid)
     beats_per_bar = grid.beats_per_bar
     slots_per_bar = beats_per_bar * subdivision
 
@@ -130,6 +163,7 @@ def quantize(
                 amplitude=note.amplitude,
                 residual=residual,
                 low_confidence=residual > SNAP_REJECT_RATIO,
+                loudness=note.loudness,
             )
         )
         residuals.append(residual)
@@ -150,17 +184,66 @@ def quantize(
         note_count=sum(len(b.notes) for b in bars),
         phase=phase,
         phase_corrected=phase_corrected,
+        sixteenth_ratio=sixteenth_ratio,
     )
 
     if verbose:
         note = " (다운비트 위상 교정됨)" if phase_corrected else ""
+        grid_note = ""
+        if force_subdivision is None and not swing:
+            grid_note = f" (16분요구 {100 * sixteenth_ratio:.1f}%)"
         print(
             f"[quantize] {len(notes)} notes -> {score.note_count} in {len(bars)} bars, "
-            f"{beats_per_bar}/4, subdiv={subdivision}{' (swing)' if swing else ''}, "
-            f"phase={phase}{note}, 잔차평균={score.mean_residual:.3f}, "
+            f"{beats_per_bar}/4, subdiv={subdivision}{' (swing)' if swing else ''}"
+            f"{grid_note}, phase={phase}{note}, 잔차평균={score.mean_residual:.3f}, "
             f"pickup버림={dropped_pickup}"
         )
     return score
+
+
+def choose_subdivision(notes: list[Note], grid: BeatGrid) -> tuple[int, float]:
+    """스트레이트 곡의 격자를 고른다. 반환 (subdivision, 16분 요구 비율).
+
+    온셋 하나가 "16분 격자를 요구한다"고 보는 조건은 두 개를 모두 만족하는 것이다.
+      - 박 안 상대위치가 홀수 16분(0.25 또는 0.75)에 가장 가깝다
+      - **동시에** 가장 가까운 8분 자리에서 EIGHTH_TOLERANCE보다 멀다
+
+    두 번째 조건이 없으면 8분음표 위의 연주 흔들림이 전부 16분으로 잡힌다.
+    실제로 그 조건 없이 재봤을 때 스트레이트 곡도 절반 넘게 16분으로 판정됐다.
+
+    비트 위상을 여기서 추정하지 않는다는 점이 중요하다. 그리드의 비트를 그대로
+    쓴다 — 위상을 16분 격자 잔차로 구하면 답이 16분 간격만큼 임의로 밀린다.
+    """
+    beats = grid.beats
+    if len(notes) < MIN_NOTES_FOR_GRID_CHOICE or len(beats) < 2:
+        return DEFAULT_SUBDIVISION, 0.0
+
+    import bisect
+
+    eighth = (0.0, 0.5, 1.0)
+    sixteenth = (0.0, 0.25, 0.5, 0.75, 1.0)
+    used = 0
+    needs16 = 0
+
+    for note in notes:
+        i = bisect.bisect_right(beats, note.start) - 1
+        if i < 0 or i + 1 >= len(beats):
+            continue
+        span = beats[i + 1] - beats[i]
+        if span <= 0:
+            continue
+        pos = (note.start - beats[i]) / span
+        used += 1
+        dist8 = min(abs(pos - s) for s in eighth)
+        nearest16 = min(sixteenth, key=lambda s: abs(pos - s))
+        if nearest16 in (0.25, 0.75) and dist8 > EIGHTH_TOLERANCE:
+            needs16 += 1
+
+    if used < MIN_NOTES_FOR_GRID_CHOICE:
+        return DEFAULT_SUBDIVISION, 0.0
+
+    ratio = needs16 / used
+    return (4 if ratio >= SIXTEENTH_REQUIRED_RATIO else 2), ratio
 
 
 def choose_phase(notes: list[Note], grid: BeatGrid) -> tuple[int, bool]:

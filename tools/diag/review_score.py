@@ -1,12 +1,17 @@
 """생성된 악보를 표기 규칙 관점에서 전수 검토한다.
 
+격자(subdivision)는 악보 옆 manifest.json에서 읽는다. 하드코딩하면 8분 격자로
+적힌 악보를 16분 표로 검산하게 되고, 4분음표처럼 두 표에 같은 슬롯 수로 들어
+있는 음길이만 우연히 통과해서 **위반을 놓친다.**
+
 찾는 것
-  1) 마디 길이 불일치 (합이 16슬롯이 아닌 마디)
+  1) 마디 길이 불일치 (합이 마디 슬롯 수와 다른 마디)
   2) 정렬 규칙 위반 (음표/쉼표가 자기 길이의 배수 위치에서 시작하지 않음)
   3) 합칠 수 있는 연속 쉼표 (예: 슬롯 0에서 r.8 r.8 → r.4 하나로 가능)
   4) 마디 끝에서 잘린 음 (마디 넘김 타이가 있으면 살릴 수 있는 것)
   5) 표기 통계 — 음길이 분포, 타이 수, 쉼표 비중
 """
+import json
 import re
 import sys
 from collections import Counter
@@ -16,8 +21,24 @@ sys.path.insert(0, str(Path("apps/worker").resolve()))
 from pipeline.alphatex import _duration_table, slots_of
 
 PATH = Path(sys.argv[1] if len(sys.argv) > 1 else "data/975e4e588d282666/score.alphatex")
-SUB = 4
-SLOTS_PER_BAR = 4 * SUB
+
+
+def _subdivision_of(score_path: Path) -> tuple[int, int, str]:
+    """악보의 격자와 마디 슬롯 수. 반환 (subdivision, slots_per_bar, 출처)."""
+    if len(sys.argv) > 2:
+        return int(sys.argv[2]), 0, "인자"
+    manifest = score_path.parent / "manifest.json"
+    if manifest.exists():
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        sub = data.get("subdivision")
+        bpb = (data.get("timeSignature") or [4, 4])[0]
+        if sub:
+            return int(sub), int(sub) * int(bpb), "manifest"
+    return 4, 16, "기본값"
+
+
+SUB, _slots, SOURCE = _subdivision_of(PATH)
+SLOTS_PER_BAR = _slots or 4 * SUB
 
 tex = PATH.read_text(encoding="utf-8")
 body_lines = [
@@ -26,14 +47,18 @@ body_lines = [
 ]
 bars = [ln.rstrip("|").strip() for ln in body_lines]
 print("악보: %s" % PATH)
-print("마디 %d개" % len(bars))
+print("마디 %d개  격자 subdiv=%d (%d슬롯/마디, 출처=%s)" % (
+    len(bars), SUB, SLOTS_PER_BAR, SOURCE))
 print()
 
 table = _duration_table(SUB)
 align_of = {tok: al for _, tok, al in table}
 size_of = {tok: sz for sz, tok, _ in table}
 
-tok_re = re.compile(r"(?:(-|\d+)\.(\d+)|r)\.(\d+(?:\{d\})?|\d+\{tu 3\})")
+# 음길이 대안은 **긴 것부터** 늘어놓아야 한다. `\d+`를 먼저 두면 `8{tu 3}`에서
+# `8`만 먹고 `{tu 3}`을 남겨, 셋잇단 악보의 모든 음이 "알 수 없는 음길이"가 된다.
+# subdivision을 4로 하드코딩하던 동안에는 `8`이 유효한 토큰이라 조용히 통과했다.
+tok_re = re.compile(r"(?:(-|\d+)\.(\d+)|r)\.(\d+\{tu 3\}|\d+\{d\}|\d+)")
 
 bad_len, bad_align, mergeable, tie_count = [], [], [], 0
 dur_hist = Counter()
@@ -99,7 +124,8 @@ for bi, bar in enumerate(bars, 1):
         truncated.append(bi)
 
 print("=== 1) 마디 길이 검산 ===")
-print("  불일치 마디: %s" % (bad_len if bad_len else "없음 (전 마디 16슬롯)"))
+print("  불일치 마디: %s" % (
+    bad_len if bad_len else "없음 (전 마디 %d슬롯)" % SLOTS_PER_BAR))
 print()
 print("=== 2) 정렬 규칙 위반 ===")
 if bad_align:

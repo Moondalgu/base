@@ -43,6 +43,17 @@ class UnsupportedSubdivision(ValueError):
 # 셋잇단 격자에는 2의 거듭제곱 위계가 없으므로 align을 모두 1로 둔다(제약 없음).
 # 붙임점도 섞지 않는다 — 셋잇단과 붙임점을 함께 쓰면 표기가 깨진다.
 _DURATION_TABLES: dict[int, list[tuple[int, str, int]]] = {
+    # 8분 격자(1박 = 2슬롯). 온셋이 8분으로 설명되는 곡은 이쪽을 쓴다.
+    # align 규칙은 16분 표와 같은 원리다 — 일반 길이는 자기 길이, 붙임점은
+    # 자기보다 큰 최소의 2의 거듭제곱(붙임점2분 6->8, 붙임점4분 3->4).
+    2: [
+        (8, "1", 8),
+        (6, "2{d}", 8),
+        (4, "2", 4),
+        (3, "4{d}", 4),
+        (2, "4", 2),
+        (1, "8", 1),
+    ],
     4: [
         (16, "1", 16),
         (12, "2{d}", 16),
@@ -105,11 +116,49 @@ def slots_of(duration_token: str, subdivision: int) -> int:
     산출물을 다시 읽어야 하는 쪽(eval/run_eval.py, eval/compare_bars.py)이
     파싱 규칙을 따로 두면 붙임점·셋잇단 표기가 추가될 때마다 어긋난다.
     표를 여기 하나만 둔다.
+
+    **음길이와 무관한 효과가 같은 중괄호에 섞여 들어온다.** alphaTex는 중괄호를
+    연달아 쓰는 것을 거부하므로(`4{d}{ch "E"}` -> 파싱 실패) 붙임점과 코드
+    심볼을 `4{d ch "E"}` 한 덩어리로 합쳐 적는다. 되읽을 때는 음길이에
+    관계된 것만 남기고 나머지를 걷어내야 한다 — 그러지 않아 정답 대조 도구가
+    통째로 죽은 적이 있다.
     """
+    normalized = _strip_non_duration(duration_token)
     for size, token, _ in _duration_table(subdivision):
-        if token == duration_token:
+        if token == normalized:
             return size
-    raise ValueError(f"알 수 없는 음길이 표기: {duration_token!r}")
+    raise ValueError(
+        f"알 수 없는 음길이 표기: {duration_token!r} (정규화 후 {normalized!r})"
+    )
+
+
+# 음길이에 영향을 주는 중괄호 지시자. 이것만 남기고 나머지는 걷어낸다.
+_DURATION_EFFECTS = ("d", "tu")
+
+
+def _strip_non_duration(token: str) -> str:
+    """중괄호에서 음길이와 무관한 효과를 걷어낸다. `4{d ch "E"}` -> `4{d}`.
+
+    중괄호 안은 `지시자 [인자...]`의 나열이다. 지시자 단위로 끊어 음길이에
+    관계된 것만 인자까지 함께 남긴다. 조각 단위로 걸러내면 `{tu 3 ch "Am"}`에서
+    셋잇단 숫자 3을 코드 인자로 착각해 잃는다.
+    """
+    if "{" not in token or not token.endswith("}"):
+        return token
+    head, _, body = token.partition("{")
+
+    groups: list[list[str]] = []
+    for part in body[:-1].split():
+        # 인용부호로 시작하거나 소문자 지시자가 아니면 앞 지시자의 인자다.
+        if groups and (part.startswith('"') or not part.isalpha()):
+            groups[-1].append(part)
+        else:
+            groups.append([part])
+
+    kept = [g for g in groups if g[0] in _DURATION_EFFECTS]
+    if not kept:
+        return head
+    return f"{head}{{{' '.join(' '.join(g) for g in kept)}}}"
 
 
 def build(
@@ -118,8 +167,15 @@ def build(
     title: str = "Untitled",
     artist: str = "",
     include_sync: bool = True,
+    chords: list[str] | None = None,
+    key_signature: str | None = None,
 ) -> str:
-    """FrettedScore를 AlphaTex 문자열로 만든다."""
+    """FrettedScore를 AlphaTex 문자열로 만든다.
+
+    chords는 마디 순서와 같은 길이의 코드 이름 목록이다. 빈 문자열이면 그
+    마디에는 코드를 적지 않는다 — 확신 없는 코드를 적는 것은 틀린 정보를
+    주는 것이다.
+    """
     _duration_table(score.subdivision)  # 지원 여부를 먼저 확인한다
 
     lines: list[str] = []
@@ -127,6 +183,10 @@ def build(
     if artist:
         lines.append(f'\\subtitle "{_escape(artist)}"')
     lines.append(f"\\tempo {score.median_bpm:.0f}")
+    # 조표. 없으면 적지 않는다 — 조성을 모르는데 C장조로 찍으면 임시표가
+    # 엉망이 되어 악보가 오히려 나빠진다.
+    if key_signature:
+        lines.append(f"\\ks {key_signature}")
     lines.append(".")
     lines.append("")
     lines.append('\\track "Bass"')
@@ -146,8 +206,11 @@ def build(
     # 그래서 마디를 순회하며 잔여 길이(carry)를 들고 다녀야 한다.
     bar_texts: list[str] = []
     carry: tuple[int, int] | None = None
-    for bar in score.bars:
-        text, carry = _render_bar(bar, score.subdivision, carry_in=carry)
+    for i, bar in enumerate(score.bars):
+        chord = chords[i] if chords and i < len(chords) else ""
+        text, carry = _render_bar(
+            bar, score.subdivision, carry_in=carry, chord=chord
+        )
         bar_texts.append(text)
     lines.append(" |\n".join(bar_texts))
 
@@ -171,6 +234,7 @@ def _render_bar(
     bar: FrettedBar,
     subdivision: int,
     carry_in: tuple[int, int] | None = None,
+    chord: str = "",
 ) -> tuple[str, tuple[int, int] | None]:
     """마디 하나를 AlphaTex 토큰 열로 적는다. 반환 (토큰 문자열, carry_out).
 
@@ -242,7 +306,34 @@ def _render_bar(
     # 음이 하나도 없는 마디도 박자만큼 쉼표로 채워야 alphaTab이 마디 길이를 맞춘다
     if not tokens:
         tokens = _rests(0, bar.slots_per_bar, table)
+
+    # 코드 심볼은 마디의 **첫 음표**에 붙인다. `{ch "..."}`는 음길이 뒤에 오는
+    # 비트 수식이므로 duration 위치에 이어 쓴다(현 번호 뒤의 음표 효과와 다르다).
+    #
+    # 쉼표(`r.4`)나 타이(`-.4.8`)에 붙이면 파서가 `Unexpected 'LBrace'`로 거부한다.
+    # 마디가 쉼표뿐이면 코드를 적지 않는다 — 안 치는 마디의 코드는 의미도 없다.
+    # (코드 이름은 오디오 분석 결과라 노트를 걸러낸 뒤에도 남아 있을 수 있다.
+    #  음량 게이트가 그 마디 음을 전부 버린 경우가 실제로 나왔다.)
+    if chord:
+        first_note = next(
+            (i for i, tok in enumerate(tokens) if tok[:1].isdigit()), None
+        )
+        if first_note is not None:
+            tokens[first_note] = _with_chord(tokens[first_note], chord)
     return " ".join(tokens), carry_out
+
+
+def _with_chord(token: str, chord: str) -> str:
+    """음표 토큰에 코드 심볼을 붙인다.
+
+    **중괄호를 연달아 쓸 수 없다.** `0.4.4{d}{ch "E"}`는 파서가 거부하고
+    `0.4.4{d ch "E"}`는 통과한다(실측). 붙임점·셋잇단이 이미 붙은 토큰에
+    코드를 더할 때는 기존 중괄호 안으로 넣어야 한다.
+    """
+    suffix = f'ch "{_escape(chord)}"'
+    if token.endswith("}"):
+        return f"{token[:-1]} {suffix}}}"
+    return f"{token}{{{suffix}}}"
 
 
 def _absorbable(

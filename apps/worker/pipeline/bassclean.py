@@ -15,20 +15,35 @@ clean(monophonic_source=True)로 해당 단계들을 건너뛴다.
 
 from __future__ import annotations
 
+import json
 import statistics
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 # 4현 베이스 실용 음역: E1(28) ~ G2 20프렛(63)
 BASS_MIDI_MIN = 28
+# 20프렛 4현 베이스의 1현 20프렛이 E4(64). 63은 그 바로 아래 실용 상한이다.
+# 21·24프렛 악기는 더 올라가지만 범용값으로 20프렛을 쓴다.
 BASS_MIDI_MAX = 63
 
 # 배음이 나타나는 반음 간격: 옥타브, 옥타브+5도, 2옥타브, 2옥타브+장3도
 HARMONIC_INTERVALS = (12, 19, 24, 28, 31)
 
-MIN_NOTE_SEC = 0.06          # 이보다 짧으면 노이즈로 간주
-MIN_AMPLITUDE = 0.25         # basic-pitch amplitude 하한
-MERGE_GAP_SEC = 0.04         # 같은 피치가 이 간격 이내로 이어지면 한 음으로 병합
-OVERLAP_TOLERANCE = 0.05     # 이만큼 겹치면 동시 발음으로 본다
+# 이보다 짧으면 노이즈로 간주.
+# **추측(위험)이다** — 슬랩 고스트 노트와 16비트 뮤트 타격은 이보다 짧을 수 있고,
+# 우리 슬랩 누락 51.7%와 무관하지 않을 가능성이 있다. IDMT 어노테이션의
+# `excitationStyle`로 주법별 정답 음 길이 분포를 뽑으면 무엇을 자르고 있는지
+# 바로 나온다. 아직 안 했다 (POLICY.md 4.1).
+MIN_NOTE_SEC = 0.06
+# basic-pitch amplitude 하한. **basic-pitch 경로 전용**이라 기본 엔진(CREPE)에서는
+# 쓰이지 않는다 — clean(monophonic_source=True)가 해당 단계를 건너뛴다.
+MIN_AMPLITUDE = 0.25
+# 같은 피치가 이 간격 이내로 이어지면 한 음으로 병합.
+# **basic-pitch 경로 전용.** 재타현 분리(reattack.py)와 방향이 반대인 규칙이지만
+# 충돌하지 않는다 — CREPE 경로는 병합 단계를 아예 건너뛴다(POLICY.md 6장).
+MERGE_GAP_SEC = 0.04
+# 이만큼 겹치면 동시 발음으로 본다. **basic-pitch 경로 전용.**
+OVERLAP_TOLERANCE = 0.05
 
 # 같은 피치가 이어질 때 '한 음이 쪼개진 조각'인지 '다시 친 것'인지 가르는 기준.
 # 다시 치면 진폭이 오르고(정답 데이터셋 중앙값 1.25배), 조각은 감쇠 중이라
@@ -41,8 +56,13 @@ MERGE_MAX_AMPLITUDE_RATIO = 0.8
 # (진폭이 큰) 음들로 실제 음역을 추정하고, 그보다 한참 위에 있으면서
 # 약한 음만 누출로 간주해 버린다.
 LEAKAGE_CONFIDENT_AMPLITUDE = 0.6    # 이 이상이면 음역 추정에 쓸 만큼 믿는다
-LEAKAGE_REGISTER_MARGIN = 14         # 반음. 곡의 베이스 음역 위로 이만큼을 넘으면 의심
-LEAKAGE_STRONG_AMPLITUDE = 0.85      # 이만큼 세면 고음역이어도 실연주로 인정한다
+# 반음. 곡의 베이스 음역 위로 이만큼을 넘으면 의심.
+# **추측(위험)** — 14는 장9도이고 베이스가 필인·코러스에서 옥타브 위(12반음)
+# 이상으로 도약하는 것은 정상이다. 약하게 연주한 고음역 멜로디나 하모닉스가
+# 누출로 오인될 수 있다(POLICY.md 4.2).
+LEAKAGE_REGISTER_MARGIN = 14
+# 이만큼 세면 고음역이어도 실연주로 인정한다. 위와 같은 등급(POLICY.md 4.2).
+LEAKAGE_STRONG_AMPLITUDE = 0.85
 
 
 @dataclass
@@ -50,11 +70,17 @@ class Note:
     start: float
     end: float
     pitch: int
+    # CREPE periodicity(피치 확신도)다. **음량이 아니다.** 음량으로 오해해
+    # 필터를 걸면 엉뚱한 것을 자른다 — 실측 상관계수 -0.20으로 거의 무관하다.
+    # 음량이 필요하면 `loudness`를 쓴다.
     amplitude: float
     # basic-pitch가 검출한 원래 end. step5가 겹침 해소로 end를 잘라내도
     # 이 값은 그대로 둬서, step6 병합 판정이 잘린 end가 아니라 실제 검출
     # 구간 기준으로 이뤄지게 한다.
     detected_end: float = 0.0
+    # 음 구간의 실제 음량(RMS). `measure_loudness()`가 오디오에서 채운다.
+    # 0.0은 "재지 않았다"는 뜻이다.
+    loudness: float = 0.0
 
     @property
     def duration(self) -> float:
@@ -265,6 +291,297 @@ def clean(
                 f"겹침 {overlap_dropped}, 잘림 {report.dropped_truncated}, 병합 {merged})"
             )
     return notes, report
+
+
+@dataclass
+class LoudnessGateReport:
+    """음량 게이트 결과. 왜 그만큼 버렸는지 되짚을 수 있게 남긴다."""
+
+    applied: bool
+    dropped: int
+    kept: int
+    threshold: float
+    grid_before: float
+    grid_after: float
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "applied": self.applied,
+            "dropped": self.dropped,
+            "kept": self.kept,
+            "threshold": round(self.threshold, 5),
+            "gridBefore": round(self.grid_before, 4),
+            "gridAfter": round(self.grid_after, 4),
+            "reason": self.reason,
+        }
+
+
+# 온셋이 격자 자리에 얹혔다고 인정하는 여유(박 단위). 32분 간격의 절반이며
+# **격자 종류와 무관하게 같은 자를 쓴다.** 여유를 격자 간격에 비례시키면
+# (예: 16분 격자에 ±0.125박) 거친 격자가 박 전체를 덮어버려 어떤 온셋이든
+# 통과한다 — 이 프로젝트에서 이미 한 번 그렇게 틀렸다.
+GATE_GRID_TOLERANCE = 0.0625
+
+# 판정에 쓰는 격자들. 한 사람이 치면 이 중 **하나에는** 거의 다 얹힌다.
+#
+# 4=16분(스트레이트), 3=8분 셋잇단(스윙·셔플), 6=16분 셋잇단(하프타임 셔플).
+# 스윙 곡을 16분 격자로만 재면 정상 연주가 어긋난 것으로 보인다. 판정을
+# 양자화의 스윙 검출 뒤로 미루면 순서가 얽히므로, 여기서 **격자를 여러 개
+# 대보고 가장 잘 맞는 쪽**을 쓴다. 순서 의존이 없어진다.
+GATE_GRID_DIVISORS = (4, 3, 6)
+
+# 이 비율 이상이 격자에 걸리면 한 사람의 연주로 본다.
+#
+# **8분 격자로 판정하던 것을 16분으로 바꾼 이유(실측)**: IDMT 정답 17곡(한 사람
+# 연주)의 8분 정렬률 중앙값이 0.870, 최소 0.600이었다. 0.85를 임계로 두면
+# **정상 곡 17곡 중 8곡에 게이트가 발동**한다 — 정상 곡의 47%다. 그 8곡 중
+# 6곡은 16분 정렬률이 0.98~1.00이었다. 8분 자리에 안 걸리는 게 당연한
+# **정상 16비트 라인**을 두 연주 겹침으로 오판하고 실음을 지우고 있었다.
+#
+# 같은 자로 잰 16분 정렬률: 정답곡 중앙값 1.000 / 최소 0.786, 두 연주가 섞인
+# 연습영상은 0.823. 0.95는 그 사이에 두되 정답곡 대부분(15/17)을 건드리지 않는다.
+# 실측 오발동률: 옛 기준 6/17(35%) -> 이 기준 2/17(12%).
+GATE_TARGET_GRID_RATIO = 0.95
+
+# --- 얼마나 버릴지는 다른 질문이다 ---
+#
+# 위 기준은 **발동 여부**만 정한다. 일단 "두 연주가 섞였다"고 판정한 뒤에는
+# 무엇을 향해 깎을지 목표가 따로 필요하고, 그 목표는 16분 격자일 수 없다.
+#
+# 이유: 두 연주자가 같은 라인을 시간차로 치면 남는 온셋이 **인접한 16분 자리에
+# 짝으로** 앉는다. 즉 겹침 때문에 늘어난 음도 16분 격자에는 얹힌다 — 16분
+# 정렬률을 목표로 삼으면 깎을 이유를 못 찾는다. 실측: 16분 목표로 두었을 때
+# 344음이 남았고(옛 8분 목표는 263음), 영상 정답 대조에서 맞던 마디가 깨졌다.
+#
+# 두 연주가 겹친 라인은 실제보다 잘게 들린다. 그래서 수렴 목표는 **거친 격자**다.
+GATE_CONVERGE_DIVISOR = 2      # 8분 격자
+# 32분음표의 절반. 퀀타이즈 허용 오차의 통상값이고 사람의 리듬 인지 오차 안에 있다.
+GATE_CONVERGE_TOLERANCE = 0.125
+# **추측(위험)** — 발동 판정(GATE_TARGET_GRID_RATIO)은 실측으로 정했지만 이
+# 수렴 목표는 옛 8분 기준 값을 그대로 물려받았다. 8분 격자에 85%를 맞추려는 것은
+# 공격적이고 스윙·레이백 그루브를 훼손할 수 있다. 다시 재려면 골든셋 확대가
+# 먼저다 — 정답이 한 곡뿐이라 과적합한다(POLICY.md 4.3).
+GATE_CONVERGE_TARGET = 0.85
+
+# 아무리 정렬이 나빠도 이 비율 넘게 버리지 않는다. 절반 넘게 버리면 남는 것이
+# 라인이 아니라 파편이다.
+GATE_MAX_DROP_RATIO = 0.45
+
+
+def measure_loudness(notes: list[Note], stem_path: Path) -> None:
+    """각 음 구간의 RMS를 재서 `Note.loudness`를 채운다 (제자리 수정).
+
+    `Note.amplitude`는 CREPE 확신도이고 음량이 아니다. 두 연주가 섞인 입력에서
+    "더 크게 녹음된 쪽"을 고르려면 실제 음량이 필요하다.
+    """
+    import librosa
+    import numpy as np
+
+    y, sr = librosa.load(str(stem_path), sr=22050, mono=True)
+    for note in notes:
+        a = max(0, int(note.start * sr))
+        b = min(len(y), int(max(note.start + 0.02, note.end) * sr))
+        seg = y[a:b]
+        note.loudness = float(np.sqrt(np.mean(seg**2))) if len(seg) else 0.0
+
+
+def _divisor_ratio(notes: list[Note], beats: list[float], divisor: int) -> float:
+    """온셋이 1/divisor 격자 자리에 걸리는 비율."""
+    import bisect
+
+    if len(beats) < 2 or not notes:
+        return 1.0
+    slots = [k / divisor for k in range(divisor + 1)]
+    used = hit = 0
+    for note in notes:
+        i = bisect.bisect_right(beats, note.start) - 1
+        if i < 0 or i + 1 >= len(beats):
+            continue
+        span = beats[i + 1] - beats[i]
+        if span <= 0:
+            continue
+        pos = (note.start - beats[i]) / span
+        used += 1
+        if min(abs(pos - s) for s in slots) <= GATE_GRID_TOLERANCE:
+            hit += 1
+    return hit / used if used else 1.0
+
+
+def _grid_ratio(notes: list[Note], beats: list[float]) -> float:
+    """온셋이 **가장 잘 맞는 격자**에 걸리는 비율. 한 사람의 연주면 높다.
+
+    격자를 하나로 고정하면 그 격자를 쓰지 않는 연주가 어긋난 것으로 보인다.
+    스트레이트 16분·8분 셋잇단·16분 셋잇단을 모두 대보고 최대를 쓴다.
+    """
+    return max(_divisor_ratio(notes, beats, d) for d in GATE_GRID_DIVISORS)
+
+
+def _converge_ratio(notes: list[Note], beats: list[float]) -> float:
+    """온셋이 **8분 자리**에 걸리는 비율. 게이트가 무엇을 향해 깎을지 정한다.
+
+    `_grid_ratio`와 다른 지표인 것이 의도다. 그쪽은 "정상 곡인가"를 묻고
+    이쪽은 "겹침이 풀렸는가"를 묻는다. 자세한 이유는 `GATE_CONVERGE_DIVISOR`
+    주석에 있다.
+    """
+    import bisect
+
+    if len(beats) < 2 or not notes:
+        return 1.0
+    slots = [k / GATE_CONVERGE_DIVISOR for k in range(GATE_CONVERGE_DIVISOR + 1)]
+    used = hit = 0
+    for note in notes:
+        i = bisect.bisect_right(beats, note.start) - 1
+        if i < 0 or i + 1 >= len(beats):
+            continue
+        span = beats[i + 1] - beats[i]
+        if span <= 0:
+            continue
+        pos = (note.start - beats[i]) / span
+        used += 1
+        if min(abs(pos - s) for s in slots) <= GATE_CONVERGE_TOLERANCE:
+            hit += 1
+    return hit / used if used else 1.0
+
+
+def _bar_of(start: float, beats: list[float], beats_per_bar: int) -> int:
+    """온셋이 몇 번째 마디에 있는지. 위상은 정확하지 않아도 된다 —
+    "한 마디를 통째로 비우지 않는다"는 목적에는 근사로 충분하다."""
+    import bisect
+
+    i = max(0, bisect.bisect_right(beats, start) - 1)
+    return i // max(1, beats_per_bar)
+
+
+def gate_by_loudness(
+    notes: list[Note],
+    beats: list[float],
+    *,
+    beats_per_bar: int = 4,
+    verbose: bool = False,
+) -> tuple[list[Note], LoudnessGateReport]:
+    """두 연주가 섞인 입력에서 **크게 녹음된 쪽만** 남긴다.
+
+    연습 영상은 원곡 음원을 반주로 틀고 그 위에 커버 베이시스트가 연주한다.
+    Demucs는 두 베이스를 한 스템으로 합치므로 채보하면 두 타점이 섞이고, 리듬이
+    격자에서 흩어져 악보가 16분음표로 촘촘해진다. 사용자가 배우려는 것은 커버
+    파트이고 그쪽이 더 크게 녹음돼 있다.
+
+    **판정과 감량은 다른 질문이고 다른 지표를 쓴다.**
+
+    - 발동 여부: `_grid_ratio` (16분·셋잇단 중 최선). 정상 곡을 건드리지 않기
+      위한 문턱이다. 정상 16비트 라인도 스윙 곡도 이 문턱을 넘는다.
+    - 얼마나 버릴지: `_converge_ratio` (8분 격자). 겹친 연주는 실제보다 잘게
+      들리므로 거친 격자를 향해 수렴시킨다. 16분 격자를 목표로 삼으면 겹침으로
+      늘어난 음도 인접 16분 자리에 앉아 있어 깎을 이유를 찾지 못한다.
+
+    **임계값을 상수로 박지 않는다.** 약한 음을 조금씩 버리면서 수렴 지표가
+    목표에 닿는 지점을 찾는다. 즉 임계를 곡마다 데이터가 정한다.
+    """
+    before = _grid_ratio(notes, beats)
+    if not notes or before >= GATE_TARGET_GRID_RATIO:
+        return notes, LoudnessGateReport(
+            applied=False, dropped=0, kept=len(notes), threshold=0.0,
+            grid_before=before, grid_after=before,
+            reason="온셋이 이미 격자에 충분히 걸려 있어 한 사람의 연주로 본다",
+        )
+    if all(n.loudness <= 0 for n in notes):
+        return notes, LoudnessGateReport(
+            applied=False, dropped=0, kept=len(notes), threshold=0.0,
+            grid_before=before, grid_after=before,
+            reason="음량을 재지 않았다 (measure_loudness 미실행)",
+        )
+
+    # **마디마다 같은 비율로 버린다.** 곡 전체에서 약한 음부터 버리면 조용한
+    # 마디가 통째로 몰살된다 — 실측: 정답이 3타인 마디가 0타가 됐다. 마디를
+    # 비우면 악보에 구멍이 나고, 그것은 두 연주가 섞인 것보다 나쁘다.
+    # 어느 마디든 최소 한 음은 남긴다.
+    by_bar: dict[int, list[Note]] = {}
+    for note in notes:
+        by_bar.setdefault(_bar_of(note.start, beats, beats_per_bar), []).append(note)
+
+    def keep_at(ratio_drop: float) -> list[Note]:
+        kept: list[Note] = []
+        for bar_notes in by_bar.values():
+            # **이미 수렴 격자에 맞는 마디는 깎지 않는다.** 그 마디 온셋이 8분
+            # 자리에 걸려 있으면 한 사람의 연주로 볼 근거가 있고, 깎을 이유가
+            # 없다. 실측: 정답이 8타인 필인 마디(게이트 전 8타)를 5타로 깎았다.
+            #
+            # **여기에 16분 격자 보호를 더하면 안 된다(실측).** 곡 전체 판정에
+            # 쓰는 `_grid_ratio` 문턱을 마디에도 적용해 "16분에 깨끗이 얹힌
+            # 마디는 살리자"고 해봤다. 속주 구간은 실제로 살아났지만 남는 음이
+            # 300 -> 364개로 늘어 반복 구간이 무너졌다:
+            #
+            #     타현 일치 43/59(73%) -> 31/59(53%), 평균오차 0.51 -> 0.80
+            #
+            # 곡 전체 판정과 마디 판정은 묻는 것이 다르다. 전체는 "이 입력이
+            # 정상인가"이고 마디는 "이 마디를 깎아 수렴시킬 것인가"다. 같은
+            # 문턱을 옮겨 쓸 근거가 없었다.
+            if _converge_ratio(bar_notes, beats) >= GATE_CONVERGE_TARGET:
+                kept.extend(bar_notes)
+                continue
+            ordered_bar = sorted(bar_notes, key=lambda n: n.loudness, reverse=True)
+            keep_n = max(1, round(len(ordered_bar) * (1.0 - ratio_drop)))
+            kept.extend(ordered_bar[:keep_n])
+        return sorted(kept, key=lambda n: n.start)
+
+    converge_before = _converge_ratio(notes, beats)
+    best = (0.0, converge_before, list(notes))   # (버린 비율, 수렴 지표, 남은 음)
+    for pct in range(5, int(GATE_MAX_DROP_RATIO * 100) + 1, 5):
+        candidate = keep_at(pct / 100)
+        ratio = _converge_ratio(candidate, beats)
+        if ratio > best[1]:
+            best = (pct / 100, ratio, candidate)
+        if ratio >= GATE_CONVERGE_TARGET:
+            break
+
+    drop_ratio, converge_after, kept_notes = best
+    # 보고하는 값은 발동 판정에 쓴 지표로 통일한다 — 진단(diagnose)이 같은
+    # 지표·같은 문턱으로 읽기 때문이다. 두 지표를 섞어 보고하면 "게이트는
+    # 됐다는데 진단은 아니라고 한다"는 모순이 생긴다.
+    ratio = _grid_ratio(kept_notes, beats)
+    drop = len(notes) - len(kept_notes)
+    if drop == 0:
+        return notes, LoudnessGateReport(
+            applied=False, dropped=0, kept=len(notes), threshold=0.0,
+            grid_before=before, grid_after=before,
+            reason="약한 음을 버려도 정렬이 나아지지 않았다",
+        )
+    threshold = min((n.loudness for n in kept_notes), default=0.0)
+    reason = (
+        "목표 도달" if converge_after >= GATE_CONVERGE_TARGET
+        else f"상한({GATE_MAX_DROP_RATIO:.0%})까지 버려도 목표 미달 — 최선 지점 채택"
+    )
+    report = LoudnessGateReport(
+        applied=True, dropped=drop, kept=len(kept_notes), threshold=threshold,
+        grid_before=before, grid_after=ratio, reason=reason,
+    )
+    if verbose:
+        print(
+            f"[gate] 음량 게이트: {len(notes)} -> {len(kept_notes)}음 "
+            f"(임계 RMS {threshold:.4f}), 격자정렬 "
+            f"{100 * before:.1f}% -> {100 * ratio:.1f}%, "
+            f"8분수렴 {100 * converge_before:.1f}% -> {100 * converge_after:.1f}%"
+            f" — {reason}"
+        )
+    return kept_notes, report
+
+
+def save_notes(notes: list[Note], path: Path) -> None:
+    """정리된 노트를 파일로 남긴다.
+
+    이 파일이 악보의 원본이다. 난이도 레벨·이조·튜닝을 바꿀 때마다 채보를
+    다시 돌리면 5분 곡에 8분이 걸린다(CREPE가 CPU 실시간의 1.3~1.4배). 노트가
+    남아 있으면 양자화부터 다시 도는 것으로 끝나 즉시 응답할 수 있다.
+    진단 도구도 재채보 없이 같은 입력을 다시 볼 수 있다.
+    """
+    payload = [asdict(n) for n in notes]
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def load_notes(path: Path) -> list[Note]:
+    """save_notes로 남긴 노트를 되돌린다."""
+    return [Note(**item) for item in json.loads(path.read_text(encoding="utf-8"))]
 
 
 def to_pretty_midi(notes: list[Note], program: int = 33, tempo: float = 120.0):

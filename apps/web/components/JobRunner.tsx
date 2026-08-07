@@ -5,15 +5,16 @@ import { useRouter } from "next/navigation";
 
 const WORKER = process.env.NEXT_PUBLIC_WORKER_URL ?? "http://localhost:8000";
 
+// 워커의 jobs.STAGES와 같은 키를 쓴다. 모르는 키가 오면 키를 그대로 표시한다.
 const STAGE_LABELS: Record<string, string> = {
   ingest: "오디오 준비",
   separate: "악기 분리",
+  encode: "전송용 인코딩",
   beats: "박자 분석",
   transcribe: "음 검출",
   bassclean: "베이스 정리",
-  quantize: "리듬 정리",
-  fretting: "운지 배정",
-  alphatex: "악보 생성",
+  chords: "코드 분석",
+  score: "악보 생성",
 };
 
 interface StageState {

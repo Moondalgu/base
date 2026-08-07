@@ -24,6 +24,7 @@ import subprocess
 import time
 from pathlib import Path
 
+# opus 96kbps. 베이스 대역에서 채보에 영향을 줄 만한 손실이 없다.
 BITRATE = "96k"
 
 

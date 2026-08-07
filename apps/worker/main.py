@@ -6,16 +6,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 import jobs
+from pipeline import compose, export
 
 app = FastAPI(title="Lowend Worker")
 
@@ -99,6 +102,130 @@ async def job_events(job_id: str) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/scores/{content_hash}")
+async def score_variant(
+    content_hash: str,
+    level: int = compose.ORIGINAL_LEVEL,
+    transpose: int = 0,
+    tuning: str | None = None,
+) -> Response:
+    """악보를 난이도·이조·튜닝별로 다시 그려 AlphaTex로 돌려준다.
+
+    저장된 노트에서 양자화부터 다시 도는 것이므로 채보(약 480초)가 없다.
+    프론트는 피치를 바꿀 때마다 같은 transpose 값으로 여기를 다시 부른다 —
+    들리는 음과 악보가 어긋나면 안 되기 때문이다.
+    """
+    try:
+        built = await asyncio.to_thread(
+            jobs.build_score_variant,
+            content_hash,
+            level=level,
+            transpose=transpose,
+            tuning=tuning,
+        )
+    except jobs.MissingOriginals as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except compose.UnsupportedLevel as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=built.tex,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            # 프론트가 옥타브 접힘·표기 폴백을 사용자에게 알릴 수 있게 함께 넘긴다.
+            # 본문은 alphaTab에 그대로 먹여야 하므로 여기에 섞을 수 없다.
+            "X-Score-Level": str(built.level),
+            "X-Score-Transpose": str(built.transpose),
+            "X-Score-Octave-Folded": str(built.octave_folded),
+            "X-Score-Subdivision-Forced": "1" if built.subdivision_forced else "0",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/exports/{content_hash}.{fmt}")
+async def score_export(
+    content_hash: str,
+    fmt: str,
+    level: int = compose.ORIGINAL_LEVEL,
+    transpose: int = 0,
+    tuning: str | None = None,
+) -> Response:
+    """악보를 MusicXML 또는 MIDI로 내보낸다.
+
+    **난이도·이조·튜닝을 그대로 받는다.** 화면에서 보고 있는 것과 다른 것이
+    내려가면 사용자가 알 방법이 없다. `/api/scores`와 같은 인자를 같은 순서로
+    받아 같은 `compose.build()`를 타게 한 이유가 그것이다.
+
+    MusicXML은 현·프렛을 담으므로 Guitar Pro·MuseScore에서 TAB이 살아 있다.
+    MIDI는 음정·리듬만 남는다(포맷에 운지 자리가 없다).
+    """
+    if fmt not in ("musicxml", "mid"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"지원하지 않는 형식: {fmt} (musicxml 또는 mid)",
+        )
+    try:
+        built = await asyncio.to_thread(
+            jobs.build_score_variant,
+            content_hash,
+            level=level,
+            transpose=transpose,
+            tuning=tuning,
+        )
+        meta = await asyncio.to_thread(
+            jobs.score_metadata, content_hash, transpose=transpose
+        )
+    except jobs.MissingOriginals as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except compose.UnsupportedLevel as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stem = _safe_filename(meta["title"]) or content_hash
+    suffix = "" if level == compose.ORIGINAL_LEVEL else f"_Lv{level}"
+    if transpose:
+        suffix += f"_{transpose:+d}st"
+    name = f"{stem}{suffix}.{fmt}"
+
+    if fmt == "musicxml":
+        body: bytes = export.to_musicxml(
+            built.fscore,
+            title=meta["title"],
+            artist=meta["artist"],
+            key_signature=meta["keySignature"],
+        ).encode("utf-8")
+        media = "application/vnd.recordare.musicxml+xml"
+    else:
+        body = export.to_midi(built.fscore)
+        media = "audio/midi"
+
+    return Response(
+        content=body,
+        media_type=media,
+        headers={
+            # RFC 5987 형식으로 한글 제목을 담는다. filename= 만 쓰면 비ASCII가
+            # 깨지고, filename*= 만 쓰면 옛 브라우저가 못 읽는다.
+            "Content-Disposition": (
+                f'attachment; filename="{content_hash}.{fmt}"; '
+                f"filename*=UTF-8''{quote(name)}"
+            ),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _safe_filename(text: str) -> str:
+    """파일명에 쓸 수 없는 문자를 뺀다. 경로 구분자와 제어문자가 대상이다."""
+    cleaned = "".join(
+        c for c in (text or "") if c not in '\\/:*?"<>|' and c.isprintable()
+    ).strip()
+    return cleaned[:80]
 
 
 @app.get("/api/library")

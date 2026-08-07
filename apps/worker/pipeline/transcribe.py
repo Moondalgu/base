@@ -13,9 +13,14 @@ from pathlib import Path
 
 # 베이스 음역 (Hz). E1 = 41.2Hz, 4현 20프렛 상한 ≈ 415Hz
 BASS_MIN_FREQ = 35.0
+# 1현 20프렛 E4가 329.6Hz. 배음·슬랩 성분까지 덮는 상한.
 BASS_MAX_FREQ = 450.0
+# bassclean.MIN_NOTE_SEC와 같은 값·같은 등급(추측·위험, POLICY.md 4.1).
 MIN_NOTE_LENGTH_MS = 60.0
+# **추측(위험)이지만 우선순위가 낮다** — basic-pitch는 비교용 경로이고 기본
+# 엔진이 아니다(CREPE가 IDMT F 0.861 대 0.815로 앞선다). POLICY.md 4.5.
 ONSET_THRESHOLD = 0.5
+# 위와 같다(POLICY.md 4.5).
 FRAME_THRESHOLD = 0.3
 
 

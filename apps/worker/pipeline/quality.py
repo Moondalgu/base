@@ -17,7 +17,14 @@ from .beats import BeatGrid
 from .fretting import FrettedScore
 from .quantize import QuantizedScore
 
+# **추측(위험).** 사용자에게 "이 악보를 쓸 수 있다"고 말하는 값인데 근거가 없다.
+# 재는 법 두 가지가 있다(POLICY.md 4.4):
+#   1. 연주자에게 여러 품질의 악보를 보여 "연습에 쓸 수 있는가"를 받고 상관을 본다
+#   2. 오류 비용을 가중한다 — 우리는 "거짓음이 누락보다 치명적"이라고 판단했는데
+#      점수에는 반영돼 있지 않다
+# 참고: 교차 검토에서 타현 정확도 90%가 "연습 보조로 쓸 수 있는 선"으로 나왔다.
 GOOD_THRESHOLD = 70
+# 위와 같은 등급(POLICY.md 4.4).
 REFERENCE_THRESHOLD = 40
 
 # 가중치 합 = 1.0

@@ -13,6 +13,12 @@ import time
 from pathlib import Path
 
 STEM_NAMES = ("drums", "bass", "other", "vocals")
+# Demucs v4 기본 모델.
+# **추측(위험)** — htdemucs_ft(4배 느림)·mdx_extra 등 대안이 있는데 **베이스 스템
+# 품질을 비교한 적이 없다.** 분리 품질이 채보 정확도의 상한을 정하므로 여기가
+# 병목일 수 있다. 재는 법: 같은 곡에 세 모델을 돌려 각각 채보하고
+# eval/eval_video_bars.py로 잰다. 분리 자체의 SDR은 멀티트랙 정답이 없어 못
+# 재지만, 최종 채보 정확도로 재는 것이 우리 목적에 더 맞다(POLICY.md 4.6).
 MODEL_NAME = "htdemucs"
 
 

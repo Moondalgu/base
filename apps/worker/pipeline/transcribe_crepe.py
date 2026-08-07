@@ -25,11 +25,19 @@ from pathlib import Path
 # CREPE는 16kHz 입력으로 학습됐다. 다른 샘플레이트를 넣으면 내부에서
 # 리샘플링하므로 애초에 16k로 읽는 게 낭비가 없다.
 SR = 16000
-HOP = 160              # 10ms
+# **CREPE 자체 설계값이다.** 16kHz에서 160샘플(10ms)이 모델 표준이고,
+# 피치 정확도와 연산량의 균형점으로 정해진 값이다. 바꾸면 hop=320 실험에서
+# 겪은 것처럼 MIN_NOTE_SEC가 프레임 수 기준으로 흔들린다(누락 +10.4pp).
+HOP = 160
 
 # 베이스 최저음 E1 = 41.2Hz. torchcrepe 기본 fmin=50은 E1·F1을 아예
 # 후보에서 빼버리므로 베이스에 그대로 쓸 수 없다. 32.7Hz(C1)까지 내린다.
 FMIN, FMAX = 32.7, 500.0
+
+# 보컬용 음역. 남성 저음 G2(98Hz)부터 여성 고음 C6(1047Hz)까지 덮는다.
+# 베이스 음역을 그대로 쓰면 보컬의 실제 음이 상한에 걸려 옥타브 아래로
+# 잘못 잡힌다.
+VOCAL_FMIN, VOCAL_FMAX = 80.0, 1100.0
 
 # tiny는 16배 빠르지만 핑거 누락이 2배로 늘고 슬랩은 사실상 붕괴한다.
 # 속도를 위해 정확도를 내주는 거래가 성립하지 않는다.
@@ -47,8 +55,18 @@ MIN_NOTE_SEC = 0.06
 REALTIME_FACTOR = 1.26
 
 
-def transcribe(stem_path: Path, *, verbose: bool = False) -> list[tuple]:
-    """베이스 스템에서 note_events를 뽑는다.
+def transcribe(
+    stem_path: Path,
+    *,
+    verbose: bool = False,
+    fmin: float = FMIN,
+    fmax: float = FMAX,
+    hop: int = HOP,
+) -> list[tuple]:
+    """스템에서 note_events를 뽑는다. 기본 음역은 베이스다.
+
+    보컬 멜로디를 뽑을 때는 `fmin=VOCAL_FMIN, fmax=VOCAL_FMAX`를 준다. CREPE는
+    단선율 추적기라 보컬이 원래 주 대상이고, 음역만 맞춰주면 그대로 쓸 수 있다.
 
     반환 튜플 구조는 transcribe.py와 같다:
         (start_sec, end_sec, pitch_midi, amplitude, pitch_bends)
@@ -78,9 +96,9 @@ def transcribe(stem_path: Path, *, verbose: bool = False) -> list[tuple]:
     f0, periodicity = torchcrepe.predict(
         audio,
         SR,
-        hop_length=HOP,
-        fmin=FMIN,
-        fmax=FMAX,
+        hop_length=hop,
+        fmin=fmin,
+        fmax=fmax,
         model=MODEL,
         return_periodicity=True,
         batch_size=512,
@@ -91,7 +109,7 @@ def transcribe(stem_path: Path, *, verbose: bool = False) -> list[tuple]:
     f0 = f0.squeeze().numpy()
     periodicity = periodicity.squeeze().numpy()
 
-    note_events = _segment(f0, periodicity)
+    note_events = _segment(f0, periodicity, hop)
 
     if verbose:
         ratio = elapsed / duration if duration else 0.0
@@ -102,7 +120,7 @@ def transcribe(stem_path: Path, *, verbose: bool = False) -> list[tuple]:
     return note_events
 
 
-def _segment(f0, periodicity) -> list[tuple]:
+def _segment(f0, periodicity, hop: int = HOP) -> list[tuple]:
     """프레임 단위 f0를 음 단위로 묶는다.
 
     묶는 규칙은 두 개뿐이다: periodicity가 임계 이상이고, 반음으로 반올림한
@@ -120,7 +138,7 @@ def _segment(f0, periodicity) -> list[tuple]:
     if voiced.any():
         semitone[voiced] = np.rint(librosa.hz_to_midi(f0[voiced])).astype(np.int64)
 
-    frame_sec = HOP / SR
+    frame_sec = hop / SR
     events: list[tuple] = []
     run_start: int | None = None
 

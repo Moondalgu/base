@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "worker"))
 
 from pipeline import (  # noqa: E402
-    alphatex, bassclean, beats, encode, fretting, quality, quantize, separate,
-    transcribe, transcribe_crepe,
+    bassclean, beats, compose, diagnose, encode, fretting, quality, reduce,
+    separate, transcribe, transcribe_crepe,
 )
 from pipeline.ingest import ingest  # noqa: E402
 
@@ -102,15 +102,50 @@ def main() -> int:
     )
     stages["bassclean"] = _done(t)
 
-    # 6) 양자화
-    t = time.monotonic()
-    qscore = quantize.quantize(cleaned, grid, verbose=True)
-    stages["quantize"] = _done(t)
+    # 실제 음량을 재서 두 연주가 섞인 입력을 정리한다(연습 영상: 원곡 반주 +
+    # 커버 연주). 정상 입력에서는 게이트가 스스로 아무것도 버리지 않는다.
+    bassclean.measure_loudness(cleaned, bass_stem)
+    # 게이트 전 노트도 남긴다 — 게이트 전후를 같은 정답으로 채점하기 위해서다.
+    bassclean.save_notes(cleaned, workdir / "notes_raw.json")
+    # beats_per_bar를 넘긴다. 게이트는 마디마다 같은 비율로 깎는데(한 마디를
+    # 통째로 비우지 않기 위해) 기본값 4로 두면 4/4가 아닌 곡에서 마디 경계가
+    # 어긋난다.
+    cleaned, gate_report = bassclean.gate_by_loudness(
+        cleaned, grid.beats, beats_per_bar=grid.beats_per_bar, verbose=True
+    )
 
-    # 7) 운지 배정
+    # 입력이 연습 영상(베이스 둘)인지 판정한다. 게이트를 건 뒤의 정렬로 본다.
+    input_diagnosis = diagnose.diagnose(
+        gate_applied=gate_report.applied,
+        # 필드 이름이 `grid_*`다. 게이트 판정을 8분 격자에서 16분·셋잇단 격자로
+        # 바꿀 때 함께 바뀌었다. 옛 이름을 쓰면 AttributeError로 잡 전체가
+        # 죽는다 — 실제로 골든셋 3곡이 분리·채보를 다 끝낸 뒤 여기서 죽었다.
+        grid_ratio=gate_report.grid_after,
+        onsets=[n.start for n in cleaned],
+        bass_stem=bass_stem,
+        vocals_stem=(stems or {}).get("vocals"),
+        verbose=True,
+    )
+
+    # 정리된 노트가 악보의 원본이다. 남겨두면 난이도·이조·튜닝을 바꿀 때
+    # 채보를 건너뛰고 여기서부터 다시 돌 수 있다.
+    bassclean.save_notes(cleaned, workdir / "notes.json")
+
+    # 6) 악보 — 양자화 -> 운지 -> AlphaTex. 웹 경로(jobs.py)와 같은 함수를 쓴다.
     t = time.monotonic()
-    fscore = fretting.assign(qscore, args.tuning, verbose=True)
-    stages["fretting"] = _done(t)
+    built = compose.build(
+        cleaned, grid,
+        title=info.title,
+        tuning=args.tuning,
+        include_sync=not args.no_sync,
+        verbose=True,
+    )
+    qscore, fscore = built.qscore, built.fscore
+    if built.subdivision_forced:
+        print("[score] 셋잇단을 적을 수 없어 subdivision 4로 재양자화했습니다.")
+    tex_path = workdir / "score.alphatex"
+    tex_path.write_text(built.tex, encoding="utf-8")
+    stages["score"] = _done(t)
 
     # 품질 게이트
     report = quality.evaluate(cleaned, clean_report, grid, qscore, fscore)
@@ -118,26 +153,6 @@ def main() -> int:
           + (f" — {report.reason}" if report.reason else ""))
     for key, value in report.components.items():
         print(f"           {key:26s} {value:.3f}")
-
-    # 8) AlphaTex
-    t = time.monotonic()
-    try:
-        tex = alphatex.build(
-            fscore,
-            title=info.title,
-            include_sync=not args.no_sync,
-        )
-    except alphatex.UnsupportedSubdivision as exc:
-        # 예상 못 한 subdivision이 나오면 스트레이트 16분으로 재양자화한다.
-        # 리듬은 덜 정확해지지만 악보가 아예 안 나오는 것보다 낫다.
-        print(f"[alphatex] {exc}")
-        print("[alphatex] subdivision 4로 재양자화합니다.")
-        qscore = quantize.quantize(cleaned, grid, verbose=True, force_subdivision=4)
-        fscore = fretting.assign(qscore, args.tuning, verbose=True)
-        tex = alphatex.build(fscore, title=info.title, include_sync=not args.no_sync)
-    tex_path = workdir / "score.alphatex"
-    tex_path.write_text(tex, encoding="utf-8")
-    stages["alphatex"] = _done(t)
 
     # ASCII 미리보기
     print("\n[ASCII 탭 미리보기 — 앞 4마디]")
@@ -156,7 +171,8 @@ def main() -> int:
     # manifest
     manifest = {
         "contentHash": info.content_hash,
-        "schemaVersion": 1,
+        # 2: notes.json이 함께 저장되고 악보를 레벨·이조별로 다시 그릴 수 있다.
+        "schemaVersion": 2,
         "source": {
             "type": info.source_type,
             "id": info.source_id,
@@ -185,6 +201,17 @@ def main() -> int:
         "noteCount": sum(len(b.notes) for b in fscore.bars),
         "subdivision": fscore.subdivision,
         "swing": qscore.swing,
+        "loudnessGate": gate_report.to_dict(),
+        "inputDiagnosis": input_diagnosis.to_dict(),
+        # 프론트가 요청할 수 있는 악보 변형 범위 (apps/worker/main.py의 /api/scores)
+        "scoreVariants": {
+            "levels": reduce.available_levels(
+                reduce.assess_original(qscore),
+                practice_video=input_diagnosis.practice_video,
+            ),
+            "transposeRange": [-compose.TRANSPOSE_LIMIT, compose.TRANSPOSE_LIMIT],
+            "tunings": sorted(fretting.TUNING_PRESETS),
+        },
         # 마디 시각 재구성에 필요하다 (eval/run_eval.py)
         "phase": qscore.phase,
         "phaseCorrected": qscore.phase_corrected,

@@ -22,17 +22,44 @@ from .quantize import QuantizedScore
 
 # 4현 베이스 표준 튜닝. thin -> thick 순서(1번현이 G2).
 TUNING_PRESETS: dict[str, list[int]] = {
-    "standard": [43, 38, 33, 28],   # G2 D2 A1 E1
-    "dropD": [43, 38, 33, 26],      # G2 D2 A1 D1
+    "standard": [43, 38, 33, 28],       # G2 D2 A1 E1
+    "dropD": [43, 38, 33, 26],          # G2 D2 A1 D1
+    # 반음 내림. 키를 반음 내려 연습할 때 이조하는 대신 이걸 쓰면 **운지가
+    # 그대로 유지된다** — 실제 연주자가 쓰는 방법이고 다시 배울 것이 없다.
+    "halfStepDown": [42, 37, 32, 27],   # F#2 C#2 G#1 D#1
 }
 
+# 4현 베이스의 가장 보편적인 프렛 수.
 NFRETS = 20
 
-# 비용 가중치
-W_MOVE = 1.0          # 직전 음과의 프렛 거리 (손 이동)
-W_STRING_CHANGE = 0.4  # 현 이동
-W_POSITION = 0.15      # 높은 프렛 기피 (저포지션 선호)
-W_OPEN_BONUS = -0.8    # 개방현 보너스 (음수 = 비용 감소)
+# 비용 가중치 — **두 정답으로 채점해서 정한 값이다.**
+#
+# 예전 값(move 1.0 / string 0.4 / position 0.15 / open -0.8)은 전부 감으로 정한
+# 것이었다. 정답으로 재보니 IDMT 67.3% / 영상 75.0%였다.
+#
+# **IDMT 하나로 튜닝하면 안 된다.** IDMT 점수만 최대로 만든 조합
+# (move 0.35 / string 1.0 / position 0.03 / open 0.2)은 IDMT 75.5%까지 올랐지만
+# 실곡에서 **모든 음이 E현에 갇혔다**(10·9·7프렛). 자리 일치가 5/8에서 1/8로
+# 떨어졌다. IDMT는 곡당 21초짜리 짧은 리프라 한 현에 머무는 경향이 강한데,
+# 실제 곡은 코드 진행이 돌며 현을 옮긴다. 데이터셋이 실사용을 대표하지 않는다.
+#
+# 그래서 **둘 중 나쁜 쪽을 기준으로** 골랐다: IDMT 77.8% / 영상 100%.
+#   IDMT   17곡 948음, `stringNumber`/`fretNumber` 정답
+#   영상   커버 영상 화면 악보 8마디 24타 (eval/golden/champagne_video_bars25_32.json)
+#
+# 바뀐 방향:
+#   - 프렛 이동 비용을 크게 낮췄다(1.0 -> 0.2). 연주자는 한 현에 머물려고
+#     프렛을 더 움직인다.
+#   - **개방현은 보너스가 아니라 벌점이다**(-0.8 -> +0.4). 뮤트가 안 되고 음색이
+#     달라 오히려 피한다. 예전 값은 정답과 반대 방향이었고, 그래서 영상 악보가
+#     A현 5프렛으로 짚는 D를 우리는 개방 D현으로 골랐다.
+#   - 높은 프렛 기피는 거의 무시(0.15 -> 0.03).
+#
+# 재현: python eval/eval_fretting.py --sweep
+W_MOVE = 0.2           # 직전 음과의 프렛 거리 (손 이동)
+W_STRING_CHANGE = 0.2  # 현 이동
+W_POSITION = 0.03      # 높은 프렛 기피 (거의 무시)
+W_OPEN_PENALTY = 0.4   # 개방현 **벌점**. 이름이 BONUS였던 시절 값(-0.8)은 정답과 반대였다
 
 
 @dataclass
@@ -72,7 +99,18 @@ def assign(
     *,
     backend: str = "dp",
     verbose: bool = False,
+    max_fret: int | None = None,
+    max_move: int | None = None,
 ) -> FrettedScore:
+    """운지를 배정한다.
+
+    max_fret / max_move는 난이도 하향에서 온다. 비용 가중치로 저포지션을
+    "선호"하는 것만으로는 초급자가 못 짚는 자리가 남으므로, 하향 레벨에서는
+    후보 자체를 제한하는 **하드 제약**이 필요하다.
+
+    제약을 만족하는 후보가 없으면 그 음은 옥타브를 접어 제약 안으로 들여놓는다.
+    버리면 라인에 구멍이 나고, 제약을 무시하면 하향한 의미가 없다.
+    """
     tuning = TUNING_PRESETS.get(tuning_name)
     if tuning is None:
         raise ValueError(f"알 수 없는 튜닝 프리셋: {tuning_name}")
@@ -89,7 +127,12 @@ def assign(
             flat.append((bi, ni))
             pitches.append(note.pitch)
 
-    positions = _viterbi(pitches, tuning)
+    # 프렛 상한을 넘는 음은 옥타브를 접어 제약 안으로 들여놓는다. 접은 결과를
+    # FrettedNote.pitch에도 써야 한다 — 원래 피치를 남기면 적힌 프렛으로는 그
+    # 음이 나지 않아 악보와 소리가 어긋난다.
+    if max_fret is not None:
+        pitches = [_fold_into_fret_limit(p, tuning, max_fret) for p in pitches]
+    positions = _viterbi(pitches, tuning, max_fret=max_fret, max_move=max_move)
 
     bars: list[FrettedBar] = []
     unplayable = 0
@@ -98,6 +141,7 @@ def assign(
         fretted: list[FrettedNote] = []
         for note in bar.notes:
             pos = positions[cursor]
+            pitch = pitches[cursor]
             cursor += 1
             if pos is None:
                 unplayable += 1
@@ -107,7 +151,7 @@ def assign(
                 FrettedNote(
                     slot=note.slot,
                     duration_slots=note.duration_slots,
-                    pitch=note.pitch,
+                    pitch=pitch,
                     string=string,
                     fret=fret,
                     low_confidence=note.low_confidence,
@@ -142,21 +186,52 @@ def assign(
     return result
 
 
-def _candidates(pitch: int, tuning: list[int]) -> list[tuple[int, int]]:
+def _candidates(
+    pitch: int, tuning: list[int], max_fret: int | None = None
+) -> list[tuple[int, int]]:
     """이 음을 낼 수 있는 (현, 프렛) 조합 전부."""
+    ceiling = NFRETS if max_fret is None else min(NFRETS, max_fret)
     out: list[tuple[int, int]] = []
     for string, open_pitch in enumerate(tuning):
         fret = pitch - open_pitch
-        if 0 <= fret <= NFRETS:
+        if 0 <= fret <= ceiling:
             out.append((string, fret))
     return out
+
+
+def _fold_into_fret_limit(pitch: int, tuning: list[int], max_fret: int) -> int:
+    """프렛 상한 안에서 짚을 수 있는 옥타브로 접는다.
+
+    상한 안 후보가 이미 있으면 그대로 둔다. 없으면 옥타브 단위로 내리거나
+    올려서 들여놓고, 그래도 없으면 원래 피치를 돌려준다(호출부가 연주불가로
+    센다). 절대 피치 상수를 쓰지 않고 튜닝에서 경계를 구한다 — 상수로 박아두면
+    드롭D나 반음 내림 튜닝에서 틀린 경계를 쓴다.
+    """
+    if _candidates(pitch, tuning, max_fret):
+        return pitch
+    lowest = min(tuning)
+    highest = max(tuning) + min(NFRETS, max_fret)
+    for shift in (-12, 12, -24, 24):
+        candidate = pitch + shift
+        if lowest <= candidate <= highest and _candidates(candidate, tuning, max_fret):
+            return candidate
+    return pitch
 
 
 def _position_cost(fret: int) -> float:
     cost = W_POSITION * fret
     if fret == 0:
-        cost += W_OPEN_BONUS
+        cost += W_OPEN_PENALTY
     return cost
+
+
+def _move_span(prev: tuple[int, int], curr: tuple[int, int]) -> int:
+    """두 포지션 사이의 손 이동 폭(프렛). 개방현은 손을 움직이지 않는다."""
+    _, prev_fret = prev
+    _, fret = curr
+    if prev_fret == 0 or fret == 0:
+        return 0
+    return abs(fret - prev_fret)
 
 
 def _transition_cost(prev: tuple[int, int], curr: tuple[int, int]) -> float:
@@ -171,13 +246,27 @@ def _transition_cost(prev: tuple[int, int], curr: tuple[int, int]) -> float:
     return cost
 
 
-def _viterbi(pitches: list[int], tuning: list[int]) -> list[tuple[int, int] | None]:
-    """손 이동을 최소화하는 포지션 열을 고른다."""
+def _viterbi(
+    pitches: list[int],
+    tuning: list[int],
+    *,
+    max_fret: int | None = None,
+    max_move: int | None = None,
+) -> list[tuple[int, int] | None]:
+    """손 이동을 최소화하는 포지션 열을 고른다.
+
+    max_move는 하향 레벨의 이동 폭 제약이다. 비용이 아니라 **금지**로 걸어야
+    한다 — 비용으로만 두면 다른 선택지가 없을 때 큰 이동이 통과한다. 단
+    금지하면 경로가 끊길 수 있으므로, 어떤 후보도 제약을 통과하지 못하면 그
+    음에서는 제약을 풀고 최소 이동을 쓴다(악보에 구멍을 내지 않는다).
+    """
     if not pitches:
         return []
 
     # (비용, 직전 상태 인덱스) 테이블
-    states: list[list[tuple[int, int]]] = [_candidates(p, tuning) for p in pitches]
+    states: list[list[tuple[int, int]]] = [
+        _candidates(p, tuning, max_fret) for p in pitches
+    ]
     costs: list[list[float]] = []
     backptr: list[list[int]] = []
 
@@ -198,13 +287,19 @@ def _viterbi(pitches: list[int], tuning: list[int]) -> list[tuple[int, int] | No
                 row_costs.append(base)
                 row_back.append(-1)
                 continue
-            best_cost, best_idx = min(
-                (
-                    (prev_costs[j] + _transition_cost(prev_options[j], option), j)
-                    for j in range(len(prev_options))
-                ),
-                key=lambda pair: pair[0],
-            )
+            transitions = [
+                (prev_costs[j] + _transition_cost(prev_options[j], option), j)
+                for j in range(len(prev_options))
+            ]
+            if max_move is not None:
+                allowed = [
+                    t for t in transitions
+                    if _move_span(prev_options[t[1]], option) <= max_move
+                ]
+                # 제약을 통과하는 경로가 없으면 제약을 풀고 최소 이동을 쓴다.
+                # 여기서 끊으면 그 음이 악보에서 사라진다.
+                transitions = allowed or transitions
+            best_cost, best_idx = min(transitions, key=lambda pair: pair[0])
             row_costs.append(base + best_cost)
             row_back.append(best_idx)
 

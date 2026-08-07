@@ -1,0 +1,1388 @@
+{
+  "_readme": [
+    "Songsterr의 **사람이 만든** 베이스 탭. 자동 채보가 아니다.",
+    "",
+    "**같은 곡의 다른 녹음이다.** 우리가 채보하는 것은 백예린 커버 영상이고",
+    "이것은 Oasis 원곡이다. 마디 번호가 1:1로 맞지 않고 편곡도 다르다.",
+    "마디별 타현 수를 우리 정답으로 그대로 쓰면 안 된다.",
+    "",
+    "쓸 수 있는 것:",
+    "1. **화성 진행의 상대 관계** — 이조 상수가 일정하면 우리 피치 검출이",
+    "   맞다는 독립 증거가 된다.",
+    "2. **섹션 마커** — 사람이 표기한 곡 구조. `pipeline/sections.py`가 낸",
+    "   경계와 대조할 수 있는 유일한 정답이다.",
+    "3. **타현 밀도의 구간별 패턴** — 어느 구간이 2타이고 어디가 8타인지.",
+    "",
+    "튜닝이 [43,38,33,28]로 우리 standard와 같아서 현·프렛을 그대로 비교한다.",
+    "타이는 타현으로 세지 않았다 (harmony.json articulation.comparisonRule).",
+    "",
+    "받는 방법은 tools/fetch_songsterr.py 문서 참조."
+  ],
+  "source": "songsterr s391454 rev 8272267 track 3",
+  "track": "Bass - Stuart Zender",
+  "tuning": [
+    43,
+    38,
+    33,
+    28
+  ],
+  "sections": [
+    {
+      "name": "Intro 1",
+      "startBar": 1,
+      "bars": 4
+    },
+    {
+      "name": "Intro 2",
+      "startBar": 5,
+      "bars": 4
+    },
+    {
+      "name": "Verse",
+      "startBar": 9,
+      "bars": 16
+    },
+    {
+      "name": "Chorus",
+      "startBar": 25,
+      "bars": 8
+    },
+    {
+      "name": "Verse",
+      "startBar": 33,
+      "bars": 16
+    },
+    {
+      "name": "Chorus",
+      "startBar": 49,
+      "bars": 8
+    },
+    {
+      "name": "Bridge Part 1",
+      "startBar": 57,
+      "bars": 8
+    },
+    {
+      "name": "Bridge Part 2",
+      "startBar": 65,
+      "bars": 28
+    },
+    {
+      "name": "Break",
+      "startBar": 93,
+      "bars": 8
+    },
+    {
+      "name": "Chorus",
+      "startBar": 101,
+      "bars": 24
+    },
+    {
+      "name": "Outro",
+      "startBar": 125,
+      "bars": 6
+    }
+  ],
+  "bars": [
+    {
+      "bar": 1,
+      "marker": "Intro 1",
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 2,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 3,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 4,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 5,
+      "marker": "Intro 2",
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 6,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 7,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 8,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 9,
+      "marker": "Verse",
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 10,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 11,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 12,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 13,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 14,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 15,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 16,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 17,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 18,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 19,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 20,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 21,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 22,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 23,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 24,
+      "marker": null,
+      "attacks": 5,
+      "writtenNotes": 5,
+      "ties": 0,
+      "string": 1,
+      "fret": 18,
+      "pitch": 61
+    },
+    {
+      "bar": 25,
+      "marker": "Chorus",
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 26,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 27,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 28,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 29,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 30,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 31,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 32,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 33,
+      "marker": "Verse",
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 34,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 4,
+      "pitch": 37
+    },
+    {
+      "bar": 35,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 0,
+      "pitch": 33
+    },
+    {
+      "bar": 36,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 0,
+      "pitch": 33
+    },
+    {
+      "bar": 37,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 38,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 4,
+      "pitch": 37
+    },
+    {
+      "bar": 39,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 0,
+      "pitch": 33
+    },
+    {
+      "bar": 40,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 0,
+      "pitch": 33
+    },
+    {
+      "bar": 41,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 42,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 4,
+      "pitch": 37
+    },
+    {
+      "bar": 43,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 0,
+      "pitch": 33
+    },
+    {
+      "bar": 44,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 0,
+      "pitch": 33
+    },
+    {
+      "bar": 45,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 46,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 4,
+      "pitch": 37
+    },
+    {
+      "bar": 47,
+      "marker": null,
+      "attacks": 5,
+      "writtenNotes": 5,
+      "ties": 0,
+      "string": 3,
+      "fret": 3,
+      "pitch": 36
+    },
+    {
+      "bar": 48,
+      "marker": null,
+      "attacks": 2,
+      "writtenNotes": 2,
+      "ties": 0,
+      "string": 3,
+      "fret": 1,
+      "pitch": 34
+    },
+    {
+      "bar": 49,
+      "marker": "Chorus",
+      "attacks": 5,
+      "writtenNotes": 5,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 50,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 51,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 52,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 10,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 53,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 54,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 55,
+      "marker": null,
+      "attacks": 5,
+      "writtenNotes": 5,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 56,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 12,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 57,
+      "marker": "Bridge Part 1",
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 58,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 59,
+      "marker": null,
+      "attacks": 5,
+      "writtenNotes": 5,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 60,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 12,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 61,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 62,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 63,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 64,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 12,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 65,
+      "marker": "Bridge Part 2",
+      "attacks": 10,
+      "writtenNotes": 11,
+      "ties": 1,
+      "string": 1,
+      "fret": 10,
+      "pitch": 53
+    },
+    {
+      "bar": 66,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 12,
+      "ties": 2,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 67,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 13,
+      "ties": 1,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 68,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 13,
+      "ties": 2,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 69,
+      "marker": null,
+      "attacks": 13,
+      "writtenNotes": 13,
+      "ties": 0,
+      "string": 1,
+      "fret": 11,
+      "pitch": 54
+    },
+    {
+      "bar": 70,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 11,
+      "ties": 1,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 71,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 13,
+      "ties": 1,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 72,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 13,
+      "ties": 2,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 73,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 10,
+      "ties": 1,
+      "string": 1,
+      "fret": 8,
+      "pitch": 51
+    },
+    {
+      "bar": 74,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 11,
+      "ties": 1,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 75,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 12,
+      "ties": 1,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 76,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 12,
+      "ties": 0,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 77,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 13,
+      "ties": 1,
+      "string": 1,
+      "fret": 6,
+      "pitch": 49
+    },
+    {
+      "bar": 78,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 13,
+      "ties": 2,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 79,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 12,
+      "ties": 1,
+      "string": 4,
+      "fret": 0,
+      "pitch": 28
+    },
+    {
+      "bar": 80,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 12,
+      "ties": 2,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 81,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 11,
+      "ties": 1,
+      "string": 1,
+      "fret": 6,
+      "pitch": 49
+    },
+    {
+      "bar": 82,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 12,
+      "ties": 2,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 83,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 12,
+      "ties": 1,
+      "string": 4,
+      "fret": 5,
+      "pitch": 33
+    },
+    {
+      "bar": 84,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 13,
+      "ties": 1,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 85,
+      "marker": null,
+      "attacks": 8,
+      "writtenNotes": 10,
+      "ties": 2,
+      "string": 1,
+      "fret": 10,
+      "pitch": 53
+    },
+    {
+      "bar": 86,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 10,
+      "ties": 1,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 87,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 13,
+      "ties": 1,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 88,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 14,
+      "ties": 3,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 89,
+      "marker": null,
+      "attacks": 13,
+      "writtenNotes": 13,
+      "ties": 0,
+      "string": 1,
+      "fret": 11,
+      "pitch": 54
+    },
+    {
+      "bar": 90,
+      "marker": null,
+      "attacks": 10,
+      "writtenNotes": 12,
+      "ties": 2,
+      "string": 4,
+      "fret": 6,
+      "pitch": 34
+    },
+    {
+      "bar": 91,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 12,
+      "ties": 1,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 92,
+      "marker": null,
+      "attacks": 12,
+      "writtenNotes": 12,
+      "ties": 0,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 93,
+      "marker": "Break",
+      "attacks": 1,
+      "writtenNotes": 1,
+      "ties": 0,
+      "string": 4,
+      "fret": 11,
+      "pitch": 39
+    },
+    {
+      "bar": 94,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 95,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 96,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 97,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 98,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 99,
+      "marker": null,
+      "attacks": 8,
+      "writtenNotes": 8,
+      "ties": 0,
+      "string": 1,
+      "fret": 11,
+      "pitch": 54
+    },
+    {
+      "bar": 100,
+      "marker": null,
+      "attacks": 7,
+      "writtenNotes": 7,
+      "ties": 0,
+      "string": 1,
+      "fret": 8,
+      "pitch": 51
+    },
+    {
+      "bar": 101,
+      "marker": "Chorus",
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 102,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 103,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 104,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 105,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 106,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 107,
+      "marker": null,
+      "attacks": 5,
+      "writtenNotes": 5,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 108,
+      "marker": null,
+      "attacks": 11,
+      "writtenNotes": 11,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 109,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 110,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 111,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 112,
+      "marker": null,
+      "attacks": 13,
+      "writtenNotes": 13,
+      "ties": 0,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 113,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 114,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 115,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 116,
+      "marker": null,
+      "attacks": 13,
+      "writtenNotes": 13,
+      "ties": 0,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 117,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 118,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 119,
+      "marker": null,
+      "attacks": 8,
+      "writtenNotes": 8,
+      "ties": 0,
+      "string": 1,
+      "fret": 3,
+      "pitch": 46
+    },
+    {
+      "bar": 120,
+      "marker": null,
+      "attacks": 14,
+      "writtenNotes": 14,
+      "ties": 0,
+      "string": 4,
+      "fret": 2,
+      "pitch": 30
+    },
+    {
+      "bar": 121,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 122,
+      "marker": null,
+      "attacks": 9,
+      "writtenNotes": 9,
+      "ties": 0,
+      "string": 3,
+      "fret": 6,
+      "pitch": 39
+    },
+    {
+      "bar": 123,
+      "marker": null,
+      "attacks": 6,
+      "writtenNotes": 6,
+      "ties": 0,
+      "string": 3,
+      "fret": 2,
+      "pitch": 35
+    },
+    {
+      "bar": 124,
+      "marker": null,
+      "attacks": 13,
+      "writtenNotes": 13,
+      "ties": 0,
+      "string": 4,
+      "fret": 4,
+      "pitch": 32
+    },
+    {
+      "bar": 125,
+      "marker": "Outro",
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 126,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 127,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 128,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 129,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    },
+    {
+      "bar": 130,
+      "marker": null,
+      "attacks": 0,
+      "writtenNotes": 0,
+      "ties": 0,
+      "string": null,
+      "fret": null,
+      "pitch": null
+    }
+  ]
+}
