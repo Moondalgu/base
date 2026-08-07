@@ -28,8 +28,8 @@
 
 ```bash
 cd C:/Users/admin/Desktop/lowend
-git log --oneline -1        # 4f68999 feat: 골든셋 4곡 + 내보내기 + 규칙값 카탈로그
-git branch --show-current   # feat/golden-set-and-export
+git log --oneline -1        # 9e5e8d4 docs: 점검 스킬을 지시 대신 판단 중심으로 다시 씀
+git branch --show-current   # master
 ```
 
 **`data/`는 gitignore이므로 산출물이 없으면 다시 만들어야 한다.** 확인:
@@ -184,11 +184,3 @@ cd apps/web && npm run build
 - 나머지는 `CLAUDE.md` 함정 모음
 
 ---
-
-## 6. 브랜치 정리
-
-작업은 `feat/golden-set-and-export`에 있다. master로 합치려면:
-
-```bash
-git checkout master && git merge feat/golden-set-and-export
-```
