@@ -207,7 +207,7 @@ def main() -> int:
         "scoreVariants": {
             "levels": reduce.available_levels(
                 reduce.assess_original(qscore),
-                practice_video=input_diagnosis.practice_video,
+                rhythm_confident=input_diagnosis.rhythm_confident,
             ),
             "transposeRange": [-compose.TRANSPOSE_LIMIT, compose.TRANSPOSE_LIMIT],
             "tunings": sorted(fretting.TUNING_PRESETS),

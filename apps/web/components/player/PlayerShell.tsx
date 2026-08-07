@@ -42,7 +42,15 @@ interface Manifest {
   /** 원곡 자체의 난이도 판정. 단계를 하나만 주는 이유가 여기 있다 */
   originalDifficulty?: { alreadyEasy?: boolean; reason?: string };
   /** 입력 종류 판정. 연습 영상이면 하향 단계를 만들지 않는다 */
-  inputDiagnosis?: { practiceVideo?: boolean; reason?: string };
+  /**
+   * 입력 진단. `practiceVideo`는 **항상 false다** — 연습 영상 판정은 신호를
+   * 찾지 못해 버렸다(`pipeline/diagnose.py` 머리말). 쓸 것은 `rhythmConfident`다.
+   */
+  inputDiagnosis?: {
+    practiceVideo?: boolean;
+    rhythmConfident?: boolean;
+    reason?: string;
+  };
 }
 
 type Status = "loading" | "ready" | "error";
@@ -228,11 +236,16 @@ export default function PlayerShell({ hash }: { hash: string }) {
         tuning={tuning}
         gate={manifest?.loudnessGate}
         levels={manifest?.scoreVariants?.levels}
-        // 연습 영상 판정이 있으면 그 사유를 먼저 보여준다. "원곡이 이미 쉽다"와
-        // "베이스가 둘 섞였다"는 단계를 없애는 이유가 완전히 다르고, 후자는
-        // 사용자가 취할 행동(원곡 음원을 넣는다)이 있다.
+        /*
+          단계를 없앤 이유를 그대로 보여준다. "원곡이 이미 쉽다"와 "리듬 검출을
+          믿을 수 없다"는 완전히 다른 얘기이고, 후자는 사용자가 취할 행동
+          (원곡 음원을 넣어 본다)이 있다.
+
+          **`practiceVideo`를 보지 않는다.** 그 판정은 버렸다 — 공식 스튜디오
+          음원 세 곡을 전부 "베이스가 둘 섞였다"고 단정했던 자리다.
+        */
         levelReason={
-          manifest?.inputDiagnosis?.practiceVideo
+          manifest?.inputDiagnosis?.rhythmConfident === false
             ? manifest.inputDiagnosis.reason
             : manifest?.originalDifficulty?.reason
         }

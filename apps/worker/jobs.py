@@ -408,7 +408,7 @@ async def _run(job: Job) -> None:
             # 더 깎으면 원곡보다 심심해지기만 한다.
             "scoreVariants": {
                 "levels": reduce.available_levels(
-                    assessment, practice_video=diagnosis.practice_video
+                    assessment, rhythm_confident=diagnosis.rhythm_confident
                 ),
                 "transposeRange": [-compose.TRANSPOSE_LIMIT, compose.TRANSPOSE_LIMIT],
                 "tunings": sorted(fretting.TUNING_PRESETS),

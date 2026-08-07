@@ -142,13 +142,19 @@ export default function ScoreControls({
         */}
         {rhythmUntrusted && !singleLevel && (
           <div className="space-y-1 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-            <p className="font-medium">이 음원에는 베이스가 둘 섞여 있는 것으로 보입니다.</p>
+            {/*
+              **원인을 단정하지 않는다.** 예전에는 "베이스가 둘 섞여 있습니다"라고
+              적었는데, 공식 스튜디오 음원 세 곡에도 그 경고가 떴다. 격자 정렬이
+              낮은 이유는 최소 둘이고(베이스가 둘 / 우리 검출이 약함) 우리는
+              그것을 가르지 못한다(`pipeline/diagnose.py` 머리말).
+            */}
+            <p className="font-medium">이 곡은 리듬 검출 신뢰도가 낮습니다.</p>
             <p>
-              큰 소리 쪽만 남겨 정리했지만
-              {` 격자에 걸리는 비율이 ${Math.round(100 * (gate?.gridAfter ?? 0))}%로 아직 낮습니다.`}
+              {`타점의 ${Math.round(100 * (gate?.gridAfter ?? 0))}%만 격자에 얹혔습니다.`}
+              {" 베이스가 둘 섞인 음원이거나, 16비트·슬랩처럼 우리가 약한 연주일 수 있습니다."}
               {` 리듬을 믿을 수 있는 것은 ${
                 LEVELS.find((l) => l.level === MAX_TRUSTED_LEVEL_WHEN_MIXED)?.name
-              } 이하입니다.`}
+              } 이하입니다 — 음정은 참고하되 리듬은 원곡을 들어 확인하세요.`}
             </p>
           </div>
         )}

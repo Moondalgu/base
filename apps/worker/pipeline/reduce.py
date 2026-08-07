@@ -196,18 +196,47 @@ def assess_original(score: QuantizedScore) -> OriginalAssessment:
 
 
 def available_levels(
-    assessment: OriginalAssessment, *, practice_video: bool = False
+    assessment: OriginalAssessment, *, rhythm_confident: bool = True
 ) -> list[int]:
-    """이 곡에 제공할 단계. 둘 중 하나라도 걸리면 원본 하나뿐이다.
+    """이 곡에 제공할 단계.
 
-    - **원곡이 이미 쉬우면** 더 깎아도 심심해지기만 한다.
-    - **연습 영상(베이스 둘)이면** 하향이 오히려 해롭다. 하향은 검출된 음 수로
-      밀도를 정하는데 두 연주가 섞이면 그 밀도가 실제 연주와 무관하고 근음도
-      흔들린다. 게다가 이미 누군가 연습용으로 만들어 화면 악보까지 붙여둔
-      자료다. 우리가 또 깎을 이유가 없다. (`diagnose.py` 참조)
+    - **원곡이 이미 쉬우면** 원본 하나뿐이다. 더 깎아도 심심해지기만 한다.
+    - **리듬을 믿을 수 없으면** 원본과 **초급**만 준다. 중급을 빼는 이유는
+      아래에 있다.
+
+    ## 리듬을 못 믿을 때 초급을 남기는 것이 요점이다
+
+    처음에는 리듬 신뢰도가 낮으면 원본만 줬는데 **거꾸로였다.**
+
+    레벨마다 리듬을 다루는 방식이 다르다(`LevelProfile.uniform_rhythm`).
+
+    | 레벨 | 리듬 | 검출 리듬에 의존하는가 |
+    |---|---|---|
+    | 초급 | **균일 템플릿을 씌운다** | **아니오** |
+    | 중급 | 원곡 리듬을 유지한다 | 예 |
+    | 원본 | 검출 그대로 | 예 |
+
+    **초급은 검출된 리듬을 버리고 균일 8분·4분으로 다시 적는다.** 그래서
+    리듬 검출이 나쁠수록 초급이 상대적으로 안전해진다 — 틀린 리듬을 보여주는
+    대신 읽을 수 있는 형태로 덮기 때문이다. 근음 정확도는 별개 축이고 반복
+    구간에서 100%로 측정됐다.
+
+    UI도 같은 판단을 이미 하고 있었다(`ScoreControls.MAX_TRUSTED_LEVEL_WHEN_MIXED
+    = 1`: "리듬을 믿을 수 없을 때에도 신뢰할 수 있는 최고 단계"). 여기만 그것과
+    어긋나 있었다.
+
+    실측: 골든셋 4곡 전부 격자 정렬률이 0.95 미만이라 `rhythm_confident=False`다.
+    원본만 주면 **하향 기능이 어느 곡에서도 안 열린다.**
     """
-    if assessment.already_easy or practice_video:
+    if assessment.already_easy:
         return [ORIGINAL_LEVEL]
+    if not rhythm_confident:
+        # 균일 템플릿을 씌우는 단계만 남긴다. 중급은 원곡 리듬을 유지하므로
+        # 틀린 리듬을 그대로 물려받는다.
+        return sorted(
+            level for level in LEVELS
+            if level == ORIGINAL_LEVEL or LEVELS[level].uniform_rhythm
+        )
     return sorted(LEVELS)
 
 

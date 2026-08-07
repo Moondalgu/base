@@ -106,7 +106,7 @@ def main() -> int:
     manifest["scoreVariants"] = {
         "levels": reduce_mod.available_levels(
             assessment,
-            practice_video=bool(diagnosis and diagnosis.practice_video),
+            rhythm_confident=(diagnosis.rhythm_confident if diagnosis else True),
         ),
         "transposeRange": [-compose.TRANSPOSE_LIMIT, compose.TRANSPOSE_LIMIT],
         "tunings": sorted(fretting.TUNING_PRESETS),
