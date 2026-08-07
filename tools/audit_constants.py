@@ -61,9 +61,20 @@ def collect() -> list[dict]:
             lines = text.splitlines()
             tree = ast.parse(text)
             for node in tree.body:
-                if not isinstance(node, ast.Assign):
+                # `AnnAssign`(타입 주석 붙은 대입)도 읽는다. `TUNING_PRESETS:
+                # dict[...] = {...}`처럼 쓰면 `Assign`이 아니라 `AnnAssign`이라
+                # 놓치면 조사에서 빠진다.
+                if isinstance(node, ast.AnnAssign):
+                    node_targets = [node.target]
+                    node_value = node.value
+                elif isinstance(node, ast.Assign):
+                    node_targets = node.targets
+                    node_value = node.value
+                else:
                     continue
-                for target_node in node.targets:
+                if node_value is None:
+                    continue
+                for target_node in node_targets:
                     if not isinstance(target_node, ast.Name):
                         continue
                     name = target_node.id
@@ -71,7 +82,7 @@ def collect() -> list[dict]:
                     if not (name.replace("_", "").isupper() and len(name) > 2):
                         continue
                     try:
-                        value = ast.literal_eval(node.value)
+                        value = ast.literal_eval(node_value)
                     except Exception:
                         value = "<계산식>"
                     # 바로 위에 붙은 주석 줄 수. 근거가 적혀 있는지의 대리 지표다.
