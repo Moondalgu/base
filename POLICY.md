@@ -222,3 +222,18 @@ Gemini 판정 중 코드를 확인해 보니 사실과 다른 것들이다. 같�
    아니라 코드가 정본이다 — 문서는 목록과 등급만 갖는다
 3. 4장(추측·위험)에서 하나를 재서 옮기면 1장에 추가하고 4장에서 지운다.
    **4장이 줄어드는 것이 이 문서의 목적이다**
+
+---
+
+## 2026-08-08 추가·변경 상수
+
+| 상수 | 값 | 등급 | 근거 · 재는 법 |
+|---|---|---|---|
+| `eval_songsterr.MIN_TRANSPOSE_MARGIN` | 0.3 | 실측 | 진짜 이조(Queen) 마진 1.097 vs 가짜(CT) 0.085 — 사이 어디든 됨. 새 골든셋 곡에서 마진 분포 재확인 |
+| `engine_select.MIN_COVERAGE` | 0.35 | 실측 | 붕괴(VI 0.27)와 차하위(CT 0.44) 사이. 골든셋 A/B로만 확대 |
+| `engine_select.ACTIVE_RMS` | 0.02 | 차용 | diag 계열과 동일 기준 유지(일관성 목적) |
+| `transcribe_crepe.VOCAL_MIN_SEC` | 0.10 | 추측(무해) | 음절이 이보다 짧기 어려움. 가사 정렬 실패 사례가 생기면 재측정 |
+| `transcribe_crepe.VOCAL_MIN_CONFIDENCE` | 0.65 | 추측(무해) | regen_vocal 초기값 승계. 보컬 정답이 생기면 재측정 |
+| `lyrics.MODEL_SIZE` | small | 차용 | 한국어 CPU 균형점. 오인식이 문제 되면 medium A/B |
+| `lyrics.ALIGN_TOLERANCE_SEC` | 0.45 | 추측(무해) | 8분음표(75BPM 0.4s) 수준. 참조 악보 가사 마디 대조로 검증 예정(V) |
+| `chords.MIN_DIATONIC_RATIO` | 0.60→**0.55** | 실측 | 검증된 정답 4곡의 ratio 0.58~0.85 — 0.60이 정답(예뻤어 0.58)을 버렸다. 틀린 검출 표본이 생기면 하한 재설정 |

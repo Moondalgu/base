@@ -194,3 +194,30 @@ JSON으로 있고, 튜닝이 `[43,38,33,28]`로 **우리 standard와 동일**해
 - https://moises.ai/features/guitar-capo-mode/
 - https://latouchemusicale.com/en/tools/bass-tab-generator/
 - https://www.singularsound.com/blogs/news/songsterr-vs-ultimate-guitar-an-in-depth-comparison
+
+---
+
+## 2026-08-08 보강 조사 (B트랙 — 웹 리서치, 출처 확인분만)
+
+### 설계에 바로 쓰는 발견
+
+| 항목 | 사실 | 우리 시사점 |
+|---|---|---|
+| alphaTab `display.startBar`+`barCount` | 렌더 시작 마디·마디 수 지정이 공식 API | **자동 넘김 뷰(VIEW-02)를 커스텀 렌더 없이 이걸로 구현** |
+| alphaTab `api.print(width, {display:{barsPerRow}})` | A4 인쇄 팝업 + 인쇄 전용 조판 오버라이드 | **PDF(EXP-01)는 print 경로가 정답** |
+| alphaTab `stretchForce` | Gourlay 스프링-로드 간격 강도 | 음표 겹침·밀도는 이 파라미터 튜닝으로 (자체 조판 규칙 구현 불필요) |
+| It's MyTabs = github.com/louislam/its-mytabs (MIT) | 커서 3모드: 자동스크롤만 / 마디 하이라이트 / 실시간 추적 | `Desktop/lowend-refs/its-mytabs`에 클론함. 커서 모드 분리 옵션 참고 |
+| 멀티트랙 커서 트랙 고정 옵션 | **공식 API 없음** (미확인) | 3단 악보(F1)에서 커서 동작은 실측으로 확인 필요 |
+
+### 경쟁사 추가 확인
+
+- **Klangio**: 유튜브 링크 입력·PDF/MIDI/MusicXML/LilyPond/GP 내보내기·브라우저 편집(Edit Mode) 확인.
+  난이도 하향은 **드럼 simplify만** 있음 — 기타/베이스 하향은 미발견. **우리 차별점 유지.**
+  풀밴드 믹스에서 베이스 정확도가 나쁘다는 사용자 리뷰 존재("bass especially messy").
+- **Songsterr**: Loop는 Plus(유료) 기능. 자체 메트로놈 근거 못 찾음 — **우리가 갖추면 갭 공략.**
+- **Moises**: Smart Metronome이 원곡 박자에 자동 동기화된 클릭 생성(1x/0.5x/2x + count-in).
+  AI 곡 구조 분절로 파트 단위 루프 제시. → **F5 메트로놈은 beats.json 동기화 + count-in까지가 벤치마크 수준.**
+
+### 실물 대조(같은 곡 넣어보기)는 미완
+
+Klangio 20초 무료 체험(가입 불필요)으로 골든셋 곡 대조 가능 — 남은 항목으로 유지.
