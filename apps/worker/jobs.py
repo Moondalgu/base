@@ -129,8 +129,15 @@ def transcribe_vocal_stage(
     try:
         syllables = lyrics_mod.transcribe_lyrics(stem_path)
         if title:
-            # 오인식 교정. 실패·키 없음이면 원본 그대로 온다.
-            syllables = lyrics_mod.refine_with_gemini(syllables, title, artist=artist)
+            # 1순위: 정답 가사가 있으면 가져와 정렬 치환한다(시각·개수 불변).
+            # 없거나 못 믿으면 음절 단위 교정으로 폴백. 실패·키 없음이면 원본.
+            known = lyrics_mod.fetch_full_lyrics(title, artist, verbose=True)
+            if known:
+                syllables, _ = lyrics_mod.apply_known_lyrics(
+                    syllables, known, verbose=True
+                )
+            else:
+                syllables = lyrics_mod.refine_with_gemini(syllables, title, artist=artist)
         lyrics_mod.save_lyrics(syllables, workdir / "lyrics.json")
     except Exception as exc:  # noqa: BLE001
         print(f"[lyrics] 실패: {type(exc).__name__}: {exc} — 가사 없이 진행")

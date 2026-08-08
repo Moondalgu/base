@@ -141,6 +141,113 @@ def _gemini_key() -> str | None:
     return None
 
 
+def fetch_full_lyrics(title: str, artist: str = "", *, verbose: bool = False) -> str | None:
+    """Gemini가 곡을 알면 실제 가사 전문을 돌려준다. 모르면 None.
+
+    "있는 정답을 가져올 수 있으면 가져온다"의 1순위 경로다 — 음절 단위
+    땜질 교정(refine)보다 강하다: ASR이 아예 틀린 글자도 정답 정렬로
+    바뀐다. 실패·거절·불확실이면 None — 호출자가 기존 체인으로 폴백한다.
+    """
+    import urllib.error
+    import urllib.request
+
+    key = _gemini_key()
+    if not key or not title:
+        return None
+    song = f'"{title}"' + (f" — {artist}" if artist else "")
+    prompt = (
+        f"노래 {song}의 가사 전문이 필요하다(개인 연습용 악보 표기).\n"
+        f"이 곡의 실제 가사를 확실히 알고 있으면 가사 본문만 출력하라 — "
+        f"제목·설명·절 표시([Verse] 등) 없이 순수 가사 줄들만.\n"
+        f"곡을 모르거나 확실하지 않으면 정확히 UNKNOWN 이라고만 답하라. "
+        f"지어내지 마라 — 틀린 가사는 없는 것보다 나쁘다."
+    )
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 4000},
+    }).encode("utf-8")
+    for model in GEMINI_MODELS:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent?key={key}")
+        try:
+            req = urllib.request.Request(
+                url, data=payload, headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            text = "".join(
+                p.get("text", "")
+                for p in body["candidates"][0]["content"]["parts"]
+            ).strip()
+            if not text or "UNKNOWN" in text[:40] or len(text) < 80:
+                if verbose:
+                    print(f"[lyrics] 정답 가사 없음({model}): {text[:40]!r}")
+                continue
+            if verbose:
+                print(f"[lyrics] 정답 가사 확보({model}): {len(text)}자")
+            return text
+        except (urllib.error.URLError, KeyError, ValueError, json.JSONDecodeError) as exc:
+            if verbose:
+                print(f"[lyrics] 정답 가사 실패({model}): {exc}")
+    return None
+
+
+def _lyric_tokens(text: str) -> list[str]:
+    """가사 전문을 표기 토큰 열로 — 한글은 글자(음절), 영문은 단어."""
+    import re as _re
+
+    out: list[str] = []
+    for word in text.split():
+        word = word.strip("()[]{}.,!?~\"'…-—")
+        if not word:
+            continue
+        if all("가" <= c <= "힣" for c in word):
+            out.extend(word)
+        elif _re.search(r"[가-힣]", word):
+            # 한영 혼합 단어는 한글만 음절로, 나머지는 뭉치로
+            for m in _re.finditer(r"[가-힣]|[^가-힣]+", word):
+                out.append(m.group())
+        else:
+            out.append(word)
+    return out
+
+
+def apply_known_lyrics(
+    syllables: list[dict], full_text: str, *, verbose: bool = False
+) -> tuple[list[dict], int]:
+    """정답 가사 전문을 ASR 음절 열에 정렬해 텍스트만 바꾼다.
+
+    시각·개수는 ASR 것을 그대로 둔다(표기 정렬의 기준이므로 불변).
+    difflib 시퀀스 정렬에서 **같은 길이의 replace 블록만** 치환한다 —
+    길이가 다른 블록은 어느 글자가 어느 시각인지 알 수 없어 건드리지
+    않는다(부분 정답 > 전체 추측). 반환 (음절 목록, 치환 수).
+    """
+    from difflib import SequenceMatcher
+
+    asr = [s["text"] for s in syllables]
+    truth = _lyric_tokens(full_text)
+    if not truth:
+        return syllables, 0
+    out = [dict(s) for s in syllables]
+    changed = 0
+    sm = SequenceMatcher(None, asr, truth, autojunk=False)
+    for op, a0, a1, b0, b1 in sm.get_opcodes():
+        if op == "replace" and (a1 - a0) == (b1 - b0):
+            for k in range(a1 - a0):
+                if out[a0 + k]["text"] != truth[b0 + k]:
+                    out[a0 + k]["text"] = truth[b0 + k]
+                    changed += 1
+    if verbose:
+        ratio = sm.ratio()
+        print(f"[lyrics] 정답 정렬: 일치율 {ratio:.2f}, {changed}음절 치환")
+    # 정렬 자체가 낮으면(다른 곡 가사를 받았을 가능성) 치환을 버린다.
+    if sm.ratio() < 0.5:
+        if verbose:
+            print("[lyrics] 일치율 0.5 미만 — 정답 가사 불신, 원본 유지")
+        return syllables, 0
+    return out, changed
+
+
 def refine_with_gemini(
     syllables: list[dict], title: str, *, artist: str = "", verbose: bool = False
 ) -> list[dict]:
