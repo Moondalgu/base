@@ -383,25 +383,53 @@ def reduce_score(
         if counts:
             modal_count = Counter(counts).most_common(1)[0][0]
 
-    for bar in score.bars:
-        root = bar_root(bar)
+    bar_roots = [bar_root(b) for b in score.bars]
+
+    for i, bar in enumerate(score.bars):
+        root = bar_roots[i]
 
         if prof.uniform_rhythm:
             # 근음은 반마디 단위로 본다 — 코드가 반마디로 바뀌는 곡(예뻤어
             # Am7♭5→A♭dim7)에서 마디당 근음 하나로 페달하면 뒤 코드가
             # 사라진다. 참조 악보 초급판이 실제로 반마디에 근음을 바꾼다.
             front, back = half_bar_roots(bar)
-            # 반마디 가드 — 뒤 절반 근음이 **코드 비구성음이고 조성
-            # 비다이어토닉**이면 검출 오차로 보고 앞 근음으로 통일한다.
+            # 반마디 가드 — 절반 근음이 **코드 비구성음이고 조성
+            # 비다이어토닉**이면 검출 오차로 보고 반대쪽 절반으로 통일한다.
             # 두 조건을 다 걸어야 진짜 반마디 화성이 산다: 예뻤어 A→A♭
             # (A♭dim7)은 A♭이 E♭장조 다이어토닉이라 통과하고, 드라우닝
             # C→B·A♭→B(관성이 증식시킨 오검출)는 둘 다 걸려 교정된다.
+            # 앞 절반도 검사한다 — 드라우닝 C7 마디에서 앞 절반이 B(이끔음
+            # 오검출)로 잡혀 마디 앞이 통째로 깨졌다(참조는 8분 C 페달).
             if front is not None and back is not None and front % 12 != back % 12:
                 tones = chord_tones.get(bar.index) if chord_tones else None
-                out_chord = tones is not None and back % 12 not in tones
-                out_key = (diatonic_pcs is not None
-                           and back % 12 not in diatonic_pcs)
-                if out_chord and out_key:
+
+                def _misdetected(pc: int) -> bool:
+                    return (tones is not None and pc not in tones
+                            and diatonic_pcs is not None
+                            and pc not in diatonic_pcs)
+
+                if _misdetected(front % 12) and not _misdetected(back % 12):
+                    front = back
+                    report.harmony_snapped += 1
+                elif _misdetected(back % 12):
+                    back = front
+                    report.harmony_snapped += 1
+            # 선행(anticipation) 가드 — 뒤 절반 근음이 **다음 마디의 근음과
+            # 같으면** 반마디 화성이 아니라 다음 코드를 미리 치는 선행이다.
+            # 참조 악보는 선행을 반마디 체인지로 적지 않는다(드라우닝 Fm
+            # 마디의 뒤 절반 E♭ 검출 — 참조는 마디 전체가 F 페달이고 E♭은
+            # 다음 마디부터다). 진짜 반마디 화성(D♭m→/E)은 뒤 절반이 다음
+            # 마디 근음과 달라서 여기 걸리지 않는다.
+            # 단 뒤 절반 근음이 이 마디 코드의 구성음이면 선행이 아니라
+            # 정당한 반마디 화성이다(코드가 1.5마디 이어지는 곡에서 다음
+            # 마디 근음과 같아도 접으면 안 된다 — 예뻤어에서 실측 회귀).
+            if front is not None and back is not None and front % 12 != back % 12:
+                tones = chord_tones.get(bar.index) if chord_tones else None
+                nxt = bar_roots[i + 1] if i + 1 < len(bar_roots) else None
+                front_legit = tones is None or front % 12 in tones
+                back_foreign = tones is not None and back % 12 not in tones
+                if (nxt is not None and back % 12 == nxt % 12
+                        and front_legit and back_foreign):
                     back = front
                     report.harmony_snapped += 1
             # 화성 가드 — 단일 화성 마디(front==back pc)에서만. 반마디 화성
@@ -439,7 +467,15 @@ def reduce_score(
             if front is not None:
                 front = pc_floor.get(front % 12, front)
             if back is not None:
-                back = pc_floor.get(back % 12, back)
+                if front is not None and back % 12 != front % 12:
+                    # 반마디로 바뀌는 근음의 옥타브는 pc_floor(곡 최저)가
+                    # 아니라 **앞 근음에 가장 가까운 옥타브**다. 참조 실측:
+                    # D♭(A현4)→/E는 개방 E현(E1)이 아니라 A현 7(E2) — 손이
+                    # 있는 자리 근처에서 잡는다. 검출은 E1을 쳤어도 참조
+                    # 편곡은 포지션 연속을 위해 옥타브를 올려 적는다.
+                    back = _octave_near(back % 12, front)
+                else:
+                    back = pc_floor.get(back % 12, back)
             new_bar, stats = _templated_bar(
                 bar, prof, target_sub, front,
                 count_hint=modal_count, back_root=back,
@@ -481,6 +517,13 @@ def reduce_score(
 # 일찍 바뀐다 — 실측: 이 기준 없이 예뻤어 근음 일치가 77%→54%로 무너졌다.
 HALF_ROOT_MIN_NOTES = 2
 HALF_ROOT_MIN_SLOTS_RATIO = 0.5   # 뒤 절반 길이의 절반 이상을 그 음이 채워야 한다
+
+
+def _octave_near(pc: int, anchor: int) -> int:
+    """피치클래스 pc를 anchor 피치에 가장 가까운 옥타브로. 악기 음역(E1=28)
+    아래로는 내리지 않는다. 동률이면 낮은 쪽."""
+    cands = [p for p in range(28, 28 + 37) if p % 12 == pc]
+    return min(cands, key=lambda p: (abs(p - anchor), p))
 
 
 def half_bar_roots(bar: Bar) -> tuple[int | None, int | None]:
@@ -672,10 +715,17 @@ def _templated_bar(
         slot = i * step
         r = root_at(slot)
         pitch, is_colour = _colour_pitch(bar, prof, r, slot, slots_per_bar)
-        # 옥타브 위 근음 색채는 근음으로 접는다 — 참조 악보는 같은 코드면
-        # 같은 저음역이다(검출이 옥타브 위로 튄 마디가 혼자 높게 적히던 것).
-        # 5도 색채는 유지한다.
-        if is_colour and pitch % 12 == r % 12 and pitch > r:
+        # 옥타브 다른 근음 색채는 근음으로 접는다(위·아래 모두) — 참조
+        # 악보는 같은 코드면 같은 음역이다. 아래도 접어야 한다: /E 반마디
+        # 근음을 E2(A현7)로 잡았을 때 검출의 E1이 마지막 타 색채로 살아남아
+        # 참조에 없는 저음이 생겼다.
+        if is_colour and pitch % 12 == r % 12 and pitch != r:
+            pitch, is_colour = r, False
+        # 마디 중간 색채음도 접는다 — 참조 초급판은 순수 근음 페달이고,
+        # 근음이 아닌 음은 마디 **마지막 타**(다음 코드로의 어프로치 자리)
+        # 에만 나온다. 검출의 마디 중간 5도(드라우닝 A♭ 마디의 E♭ 필인)를
+        # 살리면 참조에 없는 음이 생긴다.
+        if is_colour and i < count - 1:
             pitch, is_colour = r, False
         if is_colour:
             stats["colour"] += 1
@@ -697,7 +747,7 @@ def _templated_bar(
     # 줄여 자리를 만든다 — 마디 길이는 불변이어야 한다.
     anchor = signature_offbeat(bar, bar.slots_per_bar // bar.beats_per_bar)
     if prof.keep_anchors and anchor is not None:
-        placed = _place_anchor(notes, anchor, bar, prof, root, slots_per_bar)
+        placed = _place_anchor(notes, anchor, bar, root_at, slots_per_bar)
         if placed:
             stats["anchors"] += 1
 
@@ -709,14 +759,16 @@ def _place_anchor(
     notes: list[QuantizedNote],
     anchor: QuantizedNote,
     bar: Bar,
-    prof: LevelProfile,
-    root: int,
+    root_at,
     slots_per_bar: int,
 ) -> bool:
     """시그니처 당김음을 템플릿 위에 얹는다. 얹었으면 True.
 
     템플릿 슬롯과 겹치면 얹을 필요가 없다(이미 그 자리에 음이 있다). 겹치지
     않으면 그 자리에 음을 넣고 **앞 음의 길이를 줄여** 마디 길이를 지킨다.
+
+    앵커가 살리는 것은 **리듬**(당김음 자리)이지 음높이가 아니다 — 참조
+    초급판은 순수 근음 페달이라 앵커 음높이는 그 자리의 근음으로 적는다.
     """
     # 원곡 좌표를 템플릿 좌표로 옮긴다.
     ratio = slots_per_bar / bar.slots_per_bar if bar.slots_per_bar else 1.0
@@ -734,8 +786,7 @@ def _place_anchor(
     if room < 1:
         return False
 
-    interval = (anchor.pitch - root) % 12
-    pitch = anchor.pitch if interval in prof.keep_intervals else root
+    pitch = root_at(slot)
 
     following = [n for n in notes if n.slot > slot]
     end = min((n.slot for n in following), default=slots_per_bar)
