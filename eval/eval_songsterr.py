@@ -63,6 +63,14 @@ from eval_video_bars import our_bars  # noqa: E402
 # 다른 곡이거나 비트 추적이 실패한 것이다.
 OFFSET_RANGE = range(-8, 9)
 
+# 이조를 채택하려면 최적 이조의 상관이 0반음 상관보다 이만큼 커야 한다.
+# 실측 근거 (2026-08-08): 진짜 이조(Queen +1반음)는 차이가 1.097
+# (0.905 대 −0.192)이고, 가짜 이조(Come Together +7)는 0.085(0.727 대
+# 0.642)였다. 가짜 +7은 리프의 5도(A)·슬라이드 부속음(C#)이 피치클래스
+# 분포를 오염시킨 것으로, 서브하모닉 측정(diag_subharmonic.py)에서 배음
+# 오인 0%로 반증됐다. 두 군 사이 어디든 되지만 여유 있게 중간에 둔다.
+MIN_TRANSPOSE_MARGIN = 0.3
+
 
 TUNING = [43, 38, 33, 28]      # 1현~4현. Songsterr와 우리가 같다.
 
@@ -100,19 +108,25 @@ def find_transpose(ours: dict, golden: list[dict]) -> tuple[int, float]:
 
     scored = [(corr([o[(i + k) % 12] for i in range(12)], t), k) for k in range(12)]
     best, k = max(scored)
+    base = next(c for c, kk in scored if kk == 0)
+    # 최적이 0반음을 크게 이기지 못하면 이조가 아니다 — 검출 편향(5도·경과음)이
+    # 만든 가짜 상관일 수 있다. 그때는 이조 없음으로 두고 자리 비교를 유지한다.
+    if k != 0 and best - base < MIN_TRANSPOSE_MARGIN:
+        return 0, base
     return k, best
 
 
 def score_at(
     ours: dict, golden: list[dict], offset: int, transpose: int = 0
-) -> tuple[int, int, int]:
-    """오프셋·이조를 적용해 (자리 일치, 타현 일치, 비교한 마디 수).
+) -> tuple[int, int, int, int]:
+    """오프셋·이조를 적용해 (자리 일치, 피치클래스 일치, 타현 일치, 비교 마디 수).
 
-    이조가 있으면 **자리(현·프렛)를 그대로 비교할 수 없다.** 같은 음이라도
-    다른 자리에서 나기 때문이다. 그때는 피치클래스로 비교한다 — 우리가 그
-    음을 어디서 짚는지가 아니라 **맞는 음을 냈는지**를 묻는 것이다.
+    자리(현·프렛)와 피치클래스를 **둘 다** 센다. 자리는 운지 선택이 다르면
+    같은 음도 틀리다고 보므로(같은 D2가 A현 5프렛일 수도 E현 10프렛일 수도),
+    "맞는 음을 냈는가"는 피치클래스가 답한다. 이조가 있으면 자리 비교는
+    성립하지 않으므로 피치클래스만 유효하다.
     """
-    place = attack = compared = 0
+    place = pc = attack = compared = 0
     for row in golden:
         if row.get("string") is None:
             continue                    # 쉬는 마디는 비교 대상이 아니다
@@ -123,13 +137,12 @@ def score_at(
         places = got["attacks"]
         if places:
             main = max(set(places), key=places.count)
-            if transpose:
-                want = (row["pitch"] + transpose) % 12
-                place += pitch_of(*main) % 12 == want
-            else:
+            want = (row["pitch"] + transpose) % 12
+            pc += pitch_of(*main) % 12 == want
+            if not transpose:
                 place += main == (row["string"], row["fret"])
         attack += len(places) == row["attacks"]
-    return place, attack, compared
+    return place, pc, attack, compared
 
 
 def main() -> int:
@@ -160,28 +173,31 @@ def main() -> int:
     if args.offset is not None:
         offset = args.offset
     else:
-        # 자리 일치가 최대가 되는 오프셋. 타현 수는 흔들리지만 자리는
-        # 코드 진행이라 정렬 신호로 더 안정적이다.
+        # 피치클래스 일치가 최대가 되는 오프셋. 타현 수는 흔들리지만
+        # 피치는 코드 진행이라 정렬 신호로 더 안정적이고, 자리보다
+        # 운지 선택 차이에 강건하다.
         best = max(
             OFFSET_RANGE,
-            key=lambda o: (lambda r: (r[0], r[2]))(
+            key=lambda o: (lambda r: (r[1], r[3]))(
                 score_at(ours, bars, o, transpose)
             ),
         )
         offset = best
         scores = [(o,) + score_at(ours, bars, o, transpose) for o in OFFSET_RANGE]
-        top = sorted(scores, key=lambda s: -s[1])[:3]
-        print("최적 마디 오프셋 탐색 (자리 일치 기준):")
-        for o, p, a, c in top:
-            print(f"  오프셋 {o:+3d}: 자리 {p:3}/{c:<3} 타현 {a:3}/{c}")
+        top = sorted(scores, key=lambda s: -s[2])[:3]
+        print("최적 마디 오프셋 탐색 (피치클래스 일치 기준):")
+        for o, p, q, a, c in top:
+            print(f"  오프셋 {o:+3d}: 자리 {p:3}/{c:<3} 피치클래스 {q:3}/{c:<3} 타현 {a:3}/{c}")
 
-    place, attack, compared = score_at(ours, bars, offset, transpose)
+    place, pc, attack, compared = score_at(ours, bars, offset, transpose)
     if not compared:
         print("\n[실패] 비교할 마디가 없다. 마디 수나 오프셋을 확인하라.")
         return 1
 
     print(f"\n오프셋 {offset:+d} 적용")
-    print(f"  자리(현·프렛) {place}/{compared} ({place / compared:.0%})")
+    if not transpose:
+        print(f"  자리(현·프렛) {place}/{compared} ({place / compared:.0%})")
+    print(f"  피치클래스    {pc}/{compared} ({pc / compared:.0%})")
     print(f"  타현 수       {attack}/{compared} ({attack / compared:.0%})")
 
     # 섹션별

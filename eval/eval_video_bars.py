@@ -42,8 +42,17 @@ def our_bars(tex: str, subdivision: int) -> dict[int, dict]:
     """AlphaTex를 마디별 (타현 목록)으로 되돈다. 마디 번호는 1부터.
 
     타현만 센다 — 이어짐(`-.현.길이`)과 쉼표(`r.길이`)는 타현이 아니다.
+
+    **3단 악보 대응**: `\\track`이 여러 개면 베이스 트랙(`\\staff{score tabs}`가
+    있는 트랙)만 읽는다. 트랙을 무시하고 전체를 이어 붙이면 보컬 마디가 앞에
+    끼어들어 마디 번호가 통째로 밀린다(2026-08-08, 3단 도입과 함께 수정).
     """
     body = tex.split("\n.", 1)[-1] if "\n." in tex else tex
+    if "\\track" in body:
+        segments = body.split("\\track")[1:]
+        bass_segs = [s for s in segments if "\\staff{score tabs}" in s]
+        if bass_segs:
+            body = bass_segs[-1]
     result: dict[int, dict] = {}
     for i, raw in enumerate(body.split("|"), start=1):
         attacks: list[tuple[int, int]] = []      # (현, 프렛)

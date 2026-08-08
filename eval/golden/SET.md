@@ -28,8 +28,10 @@
 | 곡 | 정답 | 오디오 | 왜 이 곡인가 |
 |---|---|---|---|
 | Queen — Another One Bites the Dust | `songsterr_queen_aobtd.json` (98마디) | [rY0WxgSXdEE](https://www.youtube.com/watch?v=rY0WxgSXdEE) 공식 뮤비 **(음원이 악보보다 +1반음)** | **베이스가 곡의 주역**이고 리프가 명확하다. 8분 중심. 우리가 가장 잘해야 하는 유형 |
-| Jamiroquai — Virtual Insanity | `songsterr_jamiroquai_virtual_insanity.json` (130마디) | [4JkIs37a2JE](https://www.youtube.com/watch?v=4JkIs37a2JE) 공식 뮤비 | **16비트 펑크, 난이도 5.** 우리가 가장 못하는 유형(고스트 노트·16분). 게이트 수렴 목표가 8분 격자인 것이 여기서 드러난다 |
+| Jamiroquai — Virtual Insanity | `songsterr_jamiroquai_virtual_insanity.json` (130마디) | [b9Y4TACmvE8](https://www.youtube.com/watch?v=b9Y4TACmvE8) 공식 Visualiser(앨범 5:41) — **MV(4JkIs37a2JE)는 축약 편집판이라 쓰면 안 된다**(2026-08-08 발견, 구간이 잘려 마디 정렬 불가) | **16비트 펑크, 난이도 5.** 우리가 가장 못하는 유형(고스트 노트·16분). CREPE가 이 곡에서 붕괴해 엔진 폴백(engine_select)이 생겼다 |
 | The Beatles — Come Together | `songsterr_beatles_come_together.json` (89마디) | [l3SBBWIxGZA](https://www.youtube.com/watch?v=l3SBBWIxGZA) 2019 믹스 | **픽 연주, 구간이 잘게 나뉜다**(16섹션, 2~8마디). 구조 분할을 판정할 수 있는 첫 곡 |
+| WOODZ — Drowning (드라우닝) | `songsterr_woodz_drowning.json` (113마디) + 참조 악보 PNG(`Desktop\악보\드라우닝\`) | [NbKH4iZqq1Y](https://www.youtube.com/watch?v=NbKH4iZqq1Y) 공식 | **K-pop + 목표 악보 원곡.** akbobada 3단 악보(Lv2)와 Songsterr(원곡 난이도) 정답이 둘 다 있는 유일한 곡 — 하향 품질을 처음으로 정답 대조할 수 있다 |
+| DAY6 — 예뻤어 (You Were Beautiful) | `songsterr_day6_ywb.json` (98마디, 원곡) · `songsterr_day6_ywb_encover.json` (99마디, 뷰 많음) + 참조 악보 PNG(`Desktop\악보\예뻤어\`) | [BS7tz2rAOSA](https://www.youtube.com/watch?v=BS7tz2rAOSA) 공식 MV | **하드 케이스**: 셋잇단·고스트노트(×)·D.S. 반복 — 셋잇단 격자 경로 실전 첫 검증. Songsterr 원곡판(4뷰)은 신뢰도 낮음 — 두 판 대조 후 채택 |
 
 **리마스터·리믹스는 같은 연주다.** 2011 리마스터와 2019 믹스는 같은 테이프에서
 나온 것이므로 마디 구조와 연주 내용이 채보와 일치한다. 라이브 버전은 쓸 수 없다 —
