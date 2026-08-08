@@ -198,7 +198,10 @@ def build(
     lines.append(".")
     lines.append("")
     if vocal is not None and any(b.notes for b in vocal.bars):
-        lines.extend(_render_vocal_track(score, vocal, syllables=vocal_syllables))
+        lines.extend(_render_vocal_track(
+            score, vocal, syllables=vocal_syllables,
+            flats=_uses_flats(key_signature),
+        ))
         lines.append("")
     lines.append('\\track "Bass"')
     # \staff{tabs}만 쓰면 TAB만 렌더링되어 프론트엔드의 ScoreTab 설정(오선보+TAB)이
@@ -237,17 +240,37 @@ def _escape(text: str) -> str:
 
 
 # alphaTex 음이름. 프로브 실측(tools/probe_vocal_pitch.mjs): `c4` = MIDI 60,
-# 즉 옥타브 숫자 = midi // 12 − 1. 임시표는 샵으로 통일한다 — 조표가 플랫이어도
-# 모델에는 피치로 들어가므로 렌더러가 이명동음을 알아서 처리한다.
-_PITCH_LETTERS = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+# 즉 옥타브 숫자 = midi // 12 − 1.
+#
+# 임시표 스펠링은 **조표를 따라야 한다.** "렌더러가 이명동음을 알아서
+# 처리한다"고 믿고 샵으로 통일했었는데, 실물 렌더가 반증했다 — A♭장조
+# (♭4개) 악보의 멜로디가 d#·g#로 적혀 ♯투성이가 됐다. alphaTab은 준
+# 이름 그대로 그린다. 플랫 조성이면 플랫 이름으로 방출한다.
+_PITCH_SHARP = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+_PITCH_FLAT = ["c", "db", "d", "eb", "e", "f", "gb", "g", "ab", "a", "bb", "b"]
 
 
-def _vocal_pitch_name(midi: int) -> str:
-    return f"{_PITCH_LETTERS[midi % 12]}{midi // 12 - 1}"
+def _uses_flats(key_signature: str | None) -> bool:
+    """조표가 플랫 계열인지. 근음에 b가 붙었거나(B♭·E♭·A♭·D♭·G♭·C♭),
+    플랫 조표를 갖는 흰건반 조성(F장조, D·G·C·F단조)이면 플랫이다."""
+    if not key_signature:
+        return False
+    k = key_signature.strip().lower()
+    minor = k.endswith("m")
+    root = k[:-1] if minor else k
+    if len(root) > 1 and root.endswith("b"):
+        return True
+    return root in ({"d", "g", "c", "f"} if minor else {"f"})
+
+
+def _vocal_pitch_name(midi: int, *, flats: bool = False) -> str:
+    letters = _PITCH_FLAT if flats else _PITCH_SHARP
+    return f"{letters[midi % 12]}{midi // 12 - 1}"
 
 
 def _render_vocal_track(
-    score: FrettedScore, vocal, syllables: list[dict] | None = None
+    score: FrettedScore, vocal, syllables: list[dict] | None = None,
+    flats: bool = False,
 ) -> list[str]:
     """보컬 오선 트랙 전체를 적는다. 마디 수는 베이스 트랙과 정확히 맞춘다.
 
@@ -273,7 +296,7 @@ def _render_vocal_track(
         if vb is None or not vb.notes:
             texts.append(" ".join(_rests(0, slots_per_bar, table)))
             continue
-        text, times = _render_vocal_bar(vb, table, slots_per_bar)
+        text, times = _render_vocal_bar(vb, table, slots_per_bar, flats=flats)
         texts.append(text)
         note_times.extend(times)
 
@@ -287,7 +310,9 @@ def _render_vocal_track(
     return lines
 
 
-def _render_vocal_bar(bar, table, slots_per_bar: int) -> tuple[str, list[float]]:
+def _render_vocal_bar(
+    bar, table, slots_per_bar: int, *, flats: bool = False
+) -> tuple[str, list[float]]:
     """보컬 마디 하나 — (피치 토큰 열, 방출한 음표의 절대 시각 목록).
 
     단선율 강제(겹침은 확신도 순). 시각은 가사 정렬이 쓴다.
@@ -306,7 +331,7 @@ def _render_vocal_bar(bar, table, slots_per_bar: int) -> tuple[str, list[float]]
         if span <= 0:
             continue
         size, duration = _largest_fitting(span, pos, table)
-        tokens.append(f"{_vocal_pitch_name(n.pitch)}.{duration}")
+        tokens.append(f"{_vocal_pitch_name(n.pitch, flats=flats)}.{duration}")
         times.append(bar.start_sec + bar_len * (pos / slots_per_bar))
         pos += size
         if span > size:

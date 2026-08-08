@@ -110,7 +110,9 @@ def _detect_chords(
         return None, None
 
 
-def transcribe_vocal_stage(stem_path: Path, workdir: Path, title: str = "") -> tuple:
+def transcribe_vocal_stage(
+    stem_path: Path, workdir: Path, title: str = "", artist: str = ""
+) -> tuple:
     """보컬 채보 + 가사 ASR(+Gemini 교정) + 저장. 실패해도 잡을 멈추지 않는다.
 
     반환 (vocal_notes | None, syllables | None). 가사만 실패하면 3단은 유지된다.
@@ -128,7 +130,7 @@ def transcribe_vocal_stage(stem_path: Path, workdir: Path, title: str = "") -> t
         syllables = lyrics_mod.transcribe_lyrics(stem_path)
         if title:
             # 오인식 교정. 실패·키 없음이면 원본 그대로 온다.
-            syllables = lyrics_mod.refine_with_gemini(syllables, title)
+            syllables = lyrics_mod.refine_with_gemini(syllables, title, artist=artist)
         lyrics_mod.save_lyrics(syllables, workdir / "lyrics.json")
     except Exception as exc:  # noqa: BLE001
         print(f"[lyrics] 실패: {type(exc).__name__}: {exc} — 가사 없이 진행")
@@ -395,7 +397,8 @@ async def _run(job: Job) -> None:
         vocal_notes, vocal_syllables = None, None
         if stems.get("vocals"):
             vocal_notes, vocal_syllables = await run_stage(
-                "vocal", transcribe_vocal_stage, stems["vocals"], workdir, info.title
+                "vocal", transcribe_vocal_stage, stems["vocals"], workdir,
+                info.title, getattr(info, "uploader", "") or "",
             )
 
         # 코드 심볼 — 화성 악기가 든 other 스템의 크로마를 본다. 베이스 스템에는

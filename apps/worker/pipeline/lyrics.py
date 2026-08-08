@@ -123,9 +123,13 @@ def _gemini_key() -> str | None:
 
 
 def refine_with_gemini(
-    syllables: list[dict], title: str, *, verbose: bool = False
+    syllables: list[dict], title: str, *, artist: str = "", verbose: bool = False
 ) -> list[dict]:
     """ASR 음절 텍스트를 Gemini로 교정한다. 개수·시각 불변, 텍스트만 교체.
+
+    artist를 꼭 같이 넘겨라 — 제목만으로는 어느 곡인지 몰라 모델이 실제
+    가사를 회상하지 못하고 보수적으로 원본을 유지한다(드라우닝 실측:
+    "지치도록"이 "미치도록"으로 교정되지 않고 남았다).
 
     실패하면 원본을 그대로 돌려준다.
     """
@@ -137,9 +141,12 @@ def refine_with_gemini(
         return syllables
 
     texts = [s["text"] for s in syllables]
+    song = f'"{title}"' + (f" ({artist})" if artist else "")
     prompt = (
-        f'노래 "{title}"의 가사를 음성인식으로 딴 음절 배열이다. 오인식된 '
-        f"글자만 실제 가사로 고쳐라.\n"
+        f"노래 {song}의 가사를 음성인식으로 딴 음절 배열이다.\n"
+        f"이 곡의 실제 가사를 알고 있다면 먼저 떠올리고, 그 가사와 대조해 "
+        f"오인식된 글자를 실제 가사의 글자로 고쳐라. 곡을 모르면 한국어로 "
+        f"자연스럽게 읽히는 최소 교정만 한다.\n"
         f"규칙: 반드시 입력과 **같은 개수**의 JSON 문자열 배열로만 답한다. "
         f"항목 순서·개수를 바꾸지 말고, 확실하지 않은 항목은 그대로 둔다. "
         f"설명 금지.\n입력({len(texts)}개): {json.dumps(texts, ensure_ascii=False)}"

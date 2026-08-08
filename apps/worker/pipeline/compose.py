@@ -112,7 +112,7 @@ def build(
             from . import transcribe_crepe as _tc
 
             vworking = _tc.merge_vocal_fragments(
-                _transpose_vocal(vocal_notes, transpose)
+                _transpose_vocal(_drop_vocal_ghosts(vocal_notes), transpose)
             )
             vocal_q = quantize.quantize(
                 vworking, grid,
@@ -124,6 +124,7 @@ def build(
             # 속도가 마디 안에서 오르내린다(등속으로 보이지 않는다). 참고용
             # 멜로디에서 최대 1/16박 이동은 지면 안정과 맞바꿀 만하다.
             _snap_vocal_to_eighths(vocal_q)
+            _legato_vocal(vocal_q)
         return qs, fs, report, alphatex.build(
             fs, title=title, artist=artist, include_sync=include_sync,
             chords=chords, key_signature=key_signature, vocal=vocal_q,
@@ -176,6 +177,42 @@ def _snap_vocal_to_eighths(vocal_q: QuantizedScore) -> None:
             n.duration_slots = max(2, (n.duration_slots // 2) * 2)
             seen[slot] = n
         bar.notes = sorted(seen.values(), key=lambda x: x.slot)  # type: ignore[arg-type]
+
+
+def _drop_vocal_ghosts(notes: list[Note]) -> list[Note]:
+    """보컬 음역 밖 유령 음 제거 — 곡 중앙 피치에서 한 옥타브 넘게 아래인 음.
+
+    보컬 스템에 새어든 저음(악기 누출·숨소리)이 CREPE에 잡히면 오선 아래로
+    보조선이 주렁주렁 달린 유령이 생긴다(드라우닝 인트로 실측 2건: 중앙값
+    65에 피치 48·51). 사람 노래 한 곡의 음역이 중앙에서 아래로 12반음을
+    넘는 일은 사실상 없다. compose에서 거르는 이유 — 저장된 vocal_notes.json
+    에도 적용되어 재채보 없이 기존 산출물이 고쳐진다.
+    """
+    if len(notes) < 8:
+        return notes
+    pitches = sorted(n.pitch for n in notes)
+    median = pitches[len(pitches) // 2]
+    return [n for n in notes if n.pitch >= median - 12]
+
+
+def _legato_vocal(vocal_q: QuantizedScore) -> None:
+    """짧은 틈은 앞 음을 늘려 잇는다. 제자리 수정.
+
+    검출 듀레이션(발성 구간)을 그대로 적으면 음절마다 8분 쉼표가 끼어
+    악보가 얼룩진다 — 참조 악보의 멜로디는 다음 음절까지 이어 적는다.
+    한 박(8분 2슬롯) 이하의 틈만 잇는다. 그보다 긴 틈은 진짜 쉼(호흡)이다.
+    """
+    max_gap = 2
+    for bar in vocal_q.bars:
+        for cur, nxt in zip(bar.notes, bar.notes[1:]):
+            gap = nxt.slot - (cur.slot + cur.duration_slots)
+            if 0 < gap <= max_gap:
+                cur.duration_slots = nxt.slot - cur.slot
+        if bar.notes:
+            last = bar.notes[-1]
+            gap = bar.slots_per_bar - (last.slot + last.duration_slots)
+            if 0 < gap <= max_gap:
+                last.duration_slots = bar.slots_per_bar - last.slot
 
 
 def _transpose_vocal(notes: list[Note], semitones: int) -> list[Note]:
