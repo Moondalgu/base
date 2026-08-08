@@ -92,6 +92,12 @@ class BarChord:
     # 베이스가 루트가 아니면 True (분수 코드)
     inverted: bool
     confidence: float       # 최선 후보 대 차선 후보 비율 (1.0 = 구분 없음)
+    # **이 마디만의** 3도 크로마 에너지(베이스 음 기준 +3/+4 반음).
+    # 곡 단위 합산 판정과 별개로, 조성 프라이어를 마디 단위로 뒤집을
+    # 증거(refine_with_key)가 된다 — 진짜 세컨더리 도미넌트(C7)는 그
+    # 마디에서만 장3도가 울린다.
+    bar_minor_third: float = 0.0
+    bar_major_third: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -104,6 +110,8 @@ class BarChord:
             "quality": self.quality,
             "inverted": self.inverted,
             "confidence": round(self.confidence, 3),
+            "barMinorThird": round(self.bar_minor_third, 4),
+            "barMajorThird": round(self.bar_major_third, 4),
         }
 
 
@@ -410,6 +418,7 @@ def detect(
     # B 코드가 마디에 따라 B / B7 / 판정불가로 갈렸다. 한 곡 안에서 같은 베이스
     # 음 위 코드가 바뀌는 일은 드물어 모아서 보는 편이 음악적으로도 맞다.
     accum: dict[int, list] = {}   # bass_pc -> [크로마 합, 마디 수]
+    bar_profiles: dict[int, "np.ndarray"] = {}  # 마디 index -> 그 마디의 크로마
     for index, start, end, bass in bars:
         if bass is None:
             continue
@@ -417,6 +426,7 @@ def detect(
         if not mask.any():
             continue
         profile = chroma[:, mask].mean(axis=1)
+        bar_profiles[index] = profile
         acc = accum.setdefault(bass % 12, [np.zeros(12), 0])
         acc[0] = acc[0] + profile
         acc[1] += 1
@@ -437,6 +447,7 @@ def detect(
         root_pc, quality, inverted, ratio = decided.get(
             bass_pc, (bass_pc, None, False, 1.0)
         )
+        profile = bar_profiles.get(index)
         out.append(
             BarChord(
                 bar_index=index,
@@ -446,6 +457,14 @@ def detect(
                 quality=quality,
                 inverted=inverted,
                 confidence=ratio,
+                bar_minor_third=(
+                    float(profile[(bass_pc + MINOR_THIRD) % 12])
+                    if profile is not None else 0.0
+                ),
+                bar_major_third=(
+                    float(profile[(bass_pc + MAJOR_THIRD) % 12])
+                    if profile is not None else 0.0
+                ),
             )
         )
 
@@ -464,6 +483,64 @@ def detect(
         )
         print(f"[chords] 베이스음별 판정: {detail}")
     return out
+
+
+# 조성 프라이어를 마디 단위로 뒤집는 데 필요한 3도 우세비. 실측(드라우닝,
+# 파이프라인과 같은 크로마): 참조 악보가 C7로 적은 마디(47·48·55·56)는
+# 반대 3도 대비 2.11~2.90, 프라이어가 맞는 마디(픽업 8마디 1.74, Cm
+# 31·83·91마디 1.80~1.97)는 2.0 아래 — 갭 1.97↔2.11의 가운데를 문턱으로.
+# 1.6으로 두면 픽업·경계 마디 4곳이 잘못 뒤집혔다.
+PER_BAR_THIRD_OVERRIDE = 2.05
+
+# 조성 안 도수 → 다이어토닉 3화음 품질. 감3화음 도수(장조 vii°, 단조 ii°)와
+# 단조의 v/V(둘 다 흔함)는 프라이어를 주지 않는다 — 찍는 것이 된다.
+_MAJOR_DEGREE_QUALITY = {0: "major", 2: "minor", 4: "minor",
+                         5: "major", 7: "major", 9: "minor"}
+_MINOR_DEGREE_QUALITY = {0: "minor", 3: "major", 5: "minor", 8: "major", 10: "major"}
+
+
+def refine_with_key(chords: list[BarChord], estimate: "KeyEstimate | None",
+                    *, verbose: bool = False) -> int:
+    """조성 프라이어로 코드 품질을 다듬는다. 제자리 수정, 반환은 변경 수.
+
+    왜 필요한가 — 곡 단위 합산 크로마는 **장조 쪽으로 기운다**: 근음 자체의
+    5차 배음이 장3도 자리에 에너지를 쌓는다. 실측(드라우닝, A♭장조): 참조
+    악보가 Cm·Fm·B♭m인 마디들이 major(1.5)·판정불가로 나왔고, 전곡 품질
+    분포가 major 58 대 minor 2였다.
+
+    규칙: 조성을 신뢰할 때(trusted), **근음 자리** 코드의 근음이 다이어토닉
+    도수면 그 도수의 3화음 품질을 기본값으로 쓴다. 단 그 마디 자체의 3도
+    크로마가 반대 품질을 PER_BAR_THIRD_OVERRIDE 이상으로 지지하면 마디
+    단위로 뒤집는다 — 세컨더리 도미넌트(A♭장조의 C7)가 이 경로로 산다.
+
+    분수 코드는 건드리지 않는다: D♭m/E(A♭장조에서 비다이어토닉 품질)처럼
+    베이스 음이 이미 품질을 강하게 증언하는 판정이다.
+    """
+    if estimate is None or not estimate.trusted:
+        return 0
+    degree_quality = (_MINOR_DEGREE_QUALITY if estimate.mode == "minor"
+                      else _MAJOR_DEGREE_QUALITY)
+    changed = 0
+    for c in chords:
+        if not c.name or c.inverted:
+            continue
+        expected = degree_quality.get((c.root_pitch_class - estimate.tonic_pitch_class) % 12)
+        if expected is None:
+            continue
+        # 마디 자체의 3도 증거가 프라이어를 뒤집을 만큼 강한가
+        third_for = c.bar_major_third if expected == "minor" else c.bar_minor_third
+        third_against = c.bar_minor_third if expected == "minor" else c.bar_major_third
+        if third_against > 1e-6 and third_for / third_against >= PER_BAR_THIRD_OVERRIDE:
+            final = "major" if expected == "minor" else "minor"
+        else:
+            final = expected
+        if final != c.quality:
+            c.quality = final
+            c.name = name_of(c.root_pitch_class, final)
+            changed += 1
+    if verbose and changed:
+        print(f"[chords] 조성 프라이어({estimate.name}) 적용: {changed}마디 품질 갱신")
+    return changed
 
 
 def detect_and_save(cleaned, grid, audio_path: Path, workdir: Path):
@@ -488,6 +565,9 @@ def detect_and_save(cleaned, grid, audio_path: Path, workdir: Path):
     detected = detect(audio_path, bars)
     # 코드 진행이 나오면 조성은 계산으로 떨어진다. 오디오를 다시 안 본다.
     key = detect_key(detected)
+    # 조성이 나왔으면 품질을 조성 프라이어로 다듬는다 — 합산 크로마의
+    # 장조 편향(근음 배음) 교정. 함수 머리말에 근거.
+    refine_with_key(detected, key, verbose=True)
     (workdir / "chords.json").write_text(
         json.dumps([c.to_dict() for c in detected], ensure_ascii=False),
         encoding="utf-8",
