@@ -63,6 +63,7 @@ def build(
     vocal_notes: list[Note] | None = None,
     vocal_syllables: list[dict] | None = None,
     chord_tones: dict[int, frozenset[int]] | None = None,
+    diatonic_pcs: frozenset[int] | None = None,
 ) -> BuiltScore:
     """노트와 비트 그리드로 AlphaTex를 만든다.
 
@@ -96,11 +97,13 @@ def build(
         # 하향보다 앞에 오고 원본 단계에도 적용된다.
         qs, _inertia_report = inertia.apply_inertia(qs, verbose=verbose)
         qs, report = reduce.reduce_score(
-            qs, level, verbose=verbose, chord_tones=chord_tones
+            qs, level, verbose=verbose, chord_tones=chord_tones,
+            diatonic_pcs=diatonic_pcs,
         )
         fs = fretting.assign(
             qs, tuning, verbose=verbose,
             max_fret=profile.max_fret, max_move=profile.max_move,
+            weights=profile.fretting_weights,
         )
         vocal_q = None
         if vocal_notes:

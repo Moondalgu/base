@@ -193,6 +193,10 @@ def main() -> int:
         vocal_notes=vocal_notes,
         vocal_syllables=vocal_syllables,
         chord_tones=chords.load_tones(workdir / "chords.json"),
+        diatonic_pcs=(
+            chords.diatonic_pcs(key["tonicPitchClass"], key.get("mode", "major"))
+            if key and key.get("tonicPitchClass") is not None else None
+        ),
         verbose=True,
     )
     qscore, fscore = built.qscore, built.fscore

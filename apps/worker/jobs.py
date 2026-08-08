@@ -178,6 +178,13 @@ def build_score_variant(
     from pipeline import chords as chords_mod
 
     chord_tones = chords_mod.load_tones(workdir / "chords.json")
+    # 반마디 가드의 조성 증거. 조성을 모르면 None — 가드가 그 축을 건너뛴다.
+    diatonic = None
+    key_info = (data.get("key") if manifest_path.exists() else None) or {}
+    if key_info.get("tonicPitchClass") is not None:
+        diatonic = chords_mod.diatonic_pcs(
+            key_info["tonicPitchClass"], key_info.get("mode", "major")
+        )
 
     # 보컬 채보가 있으면 3단 악보가 된다 (드라우닝 참조 악보 형태).
     # 없으면 기존 2단 그대로 — 구버전 산출물 호환. 가사(ASR 음절)도 마찬가지다.
@@ -202,6 +209,7 @@ def build_score_variant(
         vocal_notes=vocal_notes,
         vocal_syllables=vocal_syllables,
         chord_tones=chord_tones,
+        diatonic_pcs=diatonic,
     )
 
 

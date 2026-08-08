@@ -106,6 +106,7 @@ def assign(
     verbose: bool = False,
     max_fret: int | None = None,
     max_move: int | None = None,
+    weights: dict | None = None,
 ) -> FrettedScore:
     """운지를 배정한다.
 
@@ -155,7 +156,9 @@ def assign(
     # 음이 나지 않아 악보와 소리가 어긋난다.
     if max_fret is not None:
         pitches = [_fold_into_fret_limit(p, tuning, max_fret) for p in pitches]
-    positions = _viterbi(pitches, tuning, max_fret=max_fret, max_move=max_move)
+    positions = _viterbi(
+        pitches, tuning, max_fret=max_fret, max_move=max_move, weights=weights
+    )
 
     bars: list[FrettedBar] = []
     unplayable = 0
@@ -241,13 +244,16 @@ def _fold_into_fret_limit(pitch: int, tuning: list[int], max_fret: int) -> int:
     return pitch
 
 
-def _position_cost(option: tuple[int, int], n_strings: int) -> float:
+def _position_cost(
+    option: tuple[int, int], n_strings: int, weights: dict | None = None
+) -> float:
+    w = weights or {}
     string, fret = option
-    cost = W_POSITION * fret
+    cost = w.get("w_position", W_POSITION) * fret
     if fret == 0:
-        cost += W_OPEN_PENALTY
+        cost += w.get("w_open", W_OPEN_PENALTY)
     # 현 인덱스 0 = 가장 얇은 현(G). 굵은 현일수록 벌점이 0에 가까워진다.
-    cost += W_THIN_STRING * (n_strings - 1 - string)
+    cost += w.get("w_thin_string", W_THIN_STRING) * (n_strings - 1 - string)
     return cost
 
 
@@ -260,15 +266,18 @@ def _move_span(prev: tuple[int, int], curr: tuple[int, int]) -> int:
     return abs(fret - prev_fret)
 
 
-def _transition_cost(prev: tuple[int, int], curr: tuple[int, int]) -> float:
+def _transition_cost(
+    prev: tuple[int, int], curr: tuple[int, int], weights: dict | None = None
+) -> float:
+    w = weights or {}
     prev_string, prev_fret = prev
     string, fret = curr
     cost = 0.0
     # 개방현은 손 위치를 바꾸지 않으므로 이동 비용을 매기지 않는다
     if prev_fret != 0 and fret != 0:
-        cost += W_MOVE * abs(fret - prev_fret)
+        cost += w.get("w_move", W_MOVE) * abs(fret - prev_fret)
     if string != prev_string:
-        cost += W_STRING_CHANGE * abs(string - prev_string)
+        cost += w.get("w_string_change", W_STRING_CHANGE) * abs(string - prev_string)
     return cost
 
 
@@ -278,6 +287,7 @@ def _viterbi(
     *,
     max_fret: int | None = None,
     max_move: int | None = None,
+    weights: dict | None = None,
 ) -> list[tuple[int, int] | None]:
     """손 이동을 최소화하는 포지션 열을 고른다.
 
@@ -308,13 +318,13 @@ def _viterbi(
         prev_options, prev_costs = _last_nonempty(states, costs, i)
 
         for option in options:
-            base = _position_cost(option, len(tuning))
+            base = _position_cost(option, len(tuning), weights)
             if not prev_options:
                 row_costs.append(base)
                 row_back.append(-1)
                 continue
             transitions = [
-                (prev_costs[j] + _transition_cost(prev_options[j], option), j)
+                (prev_costs[j] + _transition_cost(prev_options[j], option, weights), j)
                 for j in range(len(prev_options))
             ]
             if max_move is not None:

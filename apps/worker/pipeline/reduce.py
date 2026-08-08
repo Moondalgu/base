@@ -109,6 +109,11 @@ class LevelProfile:
     # 운지 제약 (fretting에 넘긴다). None이면 제약 없음.
     max_fret: int | None
     max_move: int | None
+    # 레벨 전용 운지 가중치 오버라이드. None이면 fretting의 전역값(실측 튜닝)을
+    # 쓴다. 초급은 참조 악보(akbobada)가 근음 페달을 **같은 현에서** 유지하므로
+    # (A♭ E현4 → C E현8) 현 이동·얇은 현 벌점을 키운다. 원곡 레벨 가중치는
+    # IDMT+영상 이중 정답으로 튜닝된 값이라 건드리지 않는다.
+    fretting_weights: dict | None = None
 
 
 LEVELS: dict[int, LevelProfile] = {
@@ -117,7 +122,16 @@ LEVELS: dict[int, LevelProfile] = {
         hint="균일한 리듬 + 근음·5도·옥타브, 저프렛",
         uniform_rhythm=True, subdivision=2, max_notes_per_bar=8,
         keep_intervals=UNISON_OCTAVE + FIFTHS,
-        keep_anchors=True, max_fret=7, max_move=3,
+        # max_fret 9: 참조 악보 초급판의 실사용 프렛이 1~9다(위 주석).
+        # 7로 두면 E현 8프렛(C)이 후보에서 원천 배제되어 참조 포지션을
+        # 재현할 수 없다 — 사용자가 실물 대조로 잡아낸 결함.
+        # max_move 5: 참조 악보의 코드 전환 이동이 최대 5프렛이다(E1→A6).
+        # 같은 현 페달 문법에서는 이동이 코드 전환에만 생기고 페달 중엔 0이라,
+        # 3으로 조이면 참조 포지션이 불변식과 충돌한다.
+        keep_anchors=True, max_fret=9, max_move=5,
+        fretting_weights={
+            "w_move": 0.15, "w_string_change": 0.8, "w_thin_string": 0.1,
+        },
     ),
     INTERMEDIATE: LevelProfile(
         level=INTERMEDIATE, name="중급",
@@ -319,6 +333,7 @@ def profile_of(level: int) -> LevelProfile:
 def reduce_score(
     score: QuantizedScore, level: int, *, verbose: bool = False,
     chord_tones: dict[int, frozenset[int]] | None = None,
+    diatonic_pcs: frozenset[int] | None = None,
 ) -> tuple[QuantizedScore, ReduceReport]:
     """난이도를 낮춘 악보를 만든다. 원본은 건드리지 않는다.
 
@@ -373,6 +388,21 @@ def reduce_score(
             # Am7♭5→A♭dim7)에서 마디당 근음 하나로 페달하면 뒤 코드가
             # 사라진다. 참조 악보 초급판이 실제로 반마디에 근음을 바꾼다.
             front, back = half_bar_roots(bar)
+            # 반마디 가드 — 뒤 절반 근음이 앞 근음의 **반음 이웃**이면서
+            # 코드 비구성음이고 조성 비다이어토닉이면 검출 반음 오차로 보고
+            # 앞 근음으로 통일한다. 세 조건을 다 걸어야 진짜 반마디 화성이
+            # 산다: 예뻤어 A→A♭(A♭dim7)은 A♭이 E♭장조 다이어토닉이라 통과,
+            # 드라우닝 C→B(관성이 증식시킨 오검출)는 셋 다 걸려 교정된다.
+            if (front is not None and back is not None
+                    and front % 12 != back % 12
+                    and min((front - back) % 12, (back - front) % 12) == 1):
+                tones = chord_tones.get(bar.index) if chord_tones else None
+                out_chord = tones is not None and back % 12 not in tones
+                out_key = (diatonic_pcs is not None
+                           and back % 12 not in diatonic_pcs)
+                if out_chord and out_key:
+                    back = front
+                    report.harmony_snapped += 1
             # 화성 가드 — 단일 화성 마디(front==back pc)에서만. 반마디 화성
             # 마디는 마디 단위 코드로 재단할 수 없다(뒤 절반을 되돌려버린다).
             #
@@ -639,7 +669,13 @@ def _templated_bar(
     notes: list[QuantizedNote] = []
     for i in range(count):
         slot = i * step
-        pitch, is_colour = _colour_pitch(bar, prof, root_at(slot), slot, slots_per_bar)
+        r = root_at(slot)
+        pitch, is_colour = _colour_pitch(bar, prof, r, slot, slots_per_bar)
+        # 옥타브 위 근음 색채는 근음으로 접는다 — 참조 악보는 같은 코드면
+        # 같은 저음역이다(검출이 옥타브 위로 튄 마디가 혼자 높게 적히던 것).
+        # 5도 색채는 유지한다.
+        if is_colour and pitch % 12 == r % 12 and pitch > r:
+            pitch, is_colour = r, False
         if is_colour:
             stats["colour"] += 1
         notes.append(

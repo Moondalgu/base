@@ -537,3 +537,14 @@ def load_tones(path: Path) -> dict[int, frozenset[int]] | None:
                      (root + MAJOR_THIRD) % 12, (root + PERFECT_FIFTH) % 12}
         out[c["bar"]] = frozenset(tones)
     return out
+
+
+# 장조·자연단조(+이끔음) 스케일 — 다이어토닉 판정용
+_MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11)
+_MINOR_SCALE = (0, 2, 3, 5, 7, 8, 10, 11)  # 자연단조 + 화성단조 이끔음
+
+
+def diatonic_pcs(tonic_pc: int, mode: str) -> frozenset[int]:
+    """조성의 다이어토닉 피치클래스 집합. 하향 반마디 가드가 쓴다."""
+    scale = _MINOR_SCALE if mode == "minor" else _MAJOR_SCALE
+    return frozenset((tonic_pc + s) % 12 for s in scale)
