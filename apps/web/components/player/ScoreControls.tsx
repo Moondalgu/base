@@ -73,6 +73,8 @@ interface Props {
   onLevel: (level: number) => void;
   onTranspose: (semitones: number) => void;
   onTuning: (tuning: string) => void;
+  /** 인쇄 창 열기. 악보가 아직 안 그려졌으면 없다 */
+  onPrint?: () => void;
 }
 
 export default function ScoreControls({
@@ -86,6 +88,7 @@ export default function ScoreControls({
   onLevel,
   onTranspose,
   onTuning,
+  onPrint,
 }: Props) {
   const offered = LEVELS.filter((l) => !levels || levels.includes(l.level));
   // 단계가 하나뿐이면 슬라이더를 보여주지 않는다. 조절할 것이 없는 컨트롤은
@@ -233,31 +236,42 @@ export default function ScoreControls({
         </p>
       </div>
 
-      {contentHash && (
+      {(contentHash || onPrint) && (
         <div className="space-y-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
           <span className="text-sm text-neutral-600 dark:text-neutral-400">내보내기</span>
           <div className="flex flex-wrap gap-2">
-            {[
-              { fmt: "musicxml", label: "MusicXML", hint: "MuseScore·Guitar Pro (TAB 유지)" },
-              { fmt: "mid", label: "MIDI", hint: "DAW (음정·리듬만)" },
-            ].map((f) => (
-              <a
-                key={f.fmt}
-                /*
-                  지금 화면에 보이는 것과 **같은** 난이도·이조·튜닝으로 받는다.
-                  다른 것이 내려가면 사용자가 알 방법이 없다.
-                */
-                href={`/api/exports/${contentHash}/${contentHash}.${f.fmt}?level=${level}&transpose=${transpose}&tuning=${tuning}`}
+            {contentHash &&
+              [
+                { fmt: "musicxml", label: "MusicXML", hint: "MuseScore·Guitar Pro (TAB 유지)" },
+                { fmt: "mid", label: "MIDI", hint: "DAW (음정·리듬만)" },
+              ].map((f) => (
+                <a
+                  key={f.fmt}
+                  /*
+                    지금 화면에 보이는 것과 **같은** 난이도·이조·튜닝으로 받는다.
+                    다른 것이 내려가면 사용자가 알 방법이 없다.
+                  */
+                  href={`/api/exports/${contentHash}/${contentHash}.${f.fmt}?level=${level}&transpose=${transpose}&tuning=${tuning}`}
+                  className="rounded bg-neutral-200 px-2 py-1 text-xs text-neutral-700 transition hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+                  title={f.hint}
+                >
+                  {f.label}
+                </a>
+              ))}
+            {onPrint && (
+              <button
+                onClick={onPrint}
                 className="rounded bg-neutral-200 px-2 py-1 text-xs text-neutral-700 transition hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-                title={f.hint}
+                title="브라우저 인쇄 창에서 'PDF로 저장'을 고르세요"
               >
-                {f.label}
-              </a>
-            ))}
+                인쇄/PDF
+              </button>
+            )}
           </div>
           <p className="text-xs text-neutral-500">
             지금 화면의 난이도·키·튜닝 그대로 내려갑니다. 자동 채보는 완벽하지 않으니
             MuseScore나 Guitar Pro에서 고쳐 쓰는 것을 전제로 두었습니다.
+            {onPrint && " 인쇄는 화면 뷰와 무관하게 전곡을 냅니다."}
           </p>
         </div>
       )}

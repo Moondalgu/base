@@ -5,7 +5,9 @@ import {
   DEFAULT_GAINS,
   PRESETS,
   StemPlayer,
+  snapToDownbeat,
   stemUrls,
+  type BeatGrid,
   type Gains,
   type StemName,
 } from "@/lib/player/engine";
@@ -72,6 +74,19 @@ export default function PlayerShell({ hash }: { hash: string }) {
   const [tuning, setTuning] = useState("standard");
   const [gains, setGains] = useState<Gains>({ ...DEFAULT_GAINS });
   const [activePreset, setActivePreset] = useState<string | null>("all");
+  // 마디 스냅과 메트로놈이 같은 격자를 쓴다. 없으면 둘 다 원래 값으로 동작한다.
+  const [beatGrid, setBeatGrid] = useState<BeatGrid | null>(null);
+  const [loopStart, setLoopStart] = useState<number | null>(null);
+  const [loopEnd, setLoopEnd] = useState<number | null>(null);
+  const [metronome, setMetronome] = useState(false);
+  const [scoreReady, setScoreReady] = useState(false);
+
+  // 브라우저 탭에 곡 제목 — 여러 곡을 탭으로 열어두고 연습하는 사용 방식에서
+  // 탭을 구분할 유일한 단서다.
+  useEffect(() => {
+    const title = manifest?.source?.title;
+    if (title) document.title = `${title} — Lowend`;
+  }, [manifest]);
 
   useEffect(() => {
     let disposed = false;
@@ -87,6 +102,24 @@ export default function PlayerShell({ hash }: { hash: string }) {
           stemFormat = data.stemFormat;
         }
 
+        // 비트 격자는 없어도 재생은 된다 — 실패해도 로딩을 세우지 않는다.
+        let grid: BeatGrid | null = null;
+        try {
+          const beatsRes = await fetch(`/api/artifacts/${hash}/beats.json`);
+          if (beatsRes.ok) {
+            const data = await beatsRes.json();
+            if (Array.isArray(data?.beats) && data.beats.length > 0) {
+              grid = {
+                beats: data.beats as number[],
+                downbeats: Array.isArray(data.downbeats) ? (data.downbeats as number[]) : [],
+              };
+            }
+          }
+        } catch {
+          grid = null;
+        }
+        if (!disposed) setBeatGrid(grid);
+
         player = await StemPlayer.create({
           urls: stemUrls(hash, stemFormat),
           onPosition: (t) => {
@@ -98,8 +131,13 @@ export default function PlayerShell({ hash }: { hash: string }) {
           await player.close();
           return;
         }
+        player.setBeatGrid(grid);
         playerRef.current = player;
         setDuration(player.duration);
+        // 곡이 바뀌면 새 엔진에는 구간·메트로놈이 없다. 표시도 같이 되돌린다.
+        setLoopStart(null);
+        setLoopEnd(null);
+        setMetronome(false);
         setStatus("ready");
         if (process.env.NODE_ENV !== "production") {
           // 브라우저 콘솔·자동화에서 엔진 상태를 들여다보기 위한 개발용 훅
@@ -170,6 +208,43 @@ export default function PlayerShell({ hash }: { hash: string }) {
     setSemitones(playerRef.current?.semitones ?? clamped);
   }, []);
 
+  /**
+   * A-B 구간 반복.
+   *
+   * 경계는 마디 시작으로 맞춘다 — 마디 중간에서 되감기면 박자가 어긋나 따라
+   * 칠 수가 없다. 격자가 없는 곡이면 찍은 위치를 그대로 쓴다.
+   * 엔진에는 입력 타임라인 초를 그대로 넘긴다(배속과 무관).
+   */
+  const markLoop = useCallback(
+    (edge: "a" | "b") => {
+      const player = playerRef.current;
+      if (!player) return;
+      const downbeats = beatGrid?.downbeats ?? [];
+      const at = snapToDownbeat(player.position, downbeats);
+
+      let start = loopStart;
+      let end = loopEnd;
+      if (edge === "a") start = loopStart === null ? at : null;
+      else end = loopEnd === null ? at : null;
+
+      // 끝이 시작보다 앞이면 무시한다. 지우는 쪽(null)은 언제나 통과시킨다.
+      if (start !== null && end !== null && end <= start) return;
+
+      setLoopStart(start);
+      setLoopEnd(end);
+      player.setLoop(start, end);
+    },
+    [beatGrid, loopStart, loopEnd],
+  );
+
+  const toggleMetronome = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    const next = !player.metronome;
+    player.setMetronome(next);
+    setMetronome(next);
+  }, []);
+
   const handleGain = useCallback((stem: StemName, value: number) => {
     const player = playerRef.current;
     if (!player) return;
@@ -223,10 +298,17 @@ export default function PlayerShell({ hash }: { hash: string }) {
         duration={duration}
         rate={rate}
         semitones={semitones}
+        loopStart={loopStart}
+        loopEnd={loopEnd}
+        metronome={metronome}
+        metronomeAvailable={Boolean(beatGrid)}
         onToggle={toggle}
         onSeek={handleSeek}
         onRate={handleRate}
         onSemitones={handleSemitones}
+        onLoopA={() => markLoop("a")}
+        onLoopB={() => markLoop("b")}
+        onMetronome={toggleMetronome}
       />
 
       <ScoreControls
@@ -252,6 +334,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         onLevel={setLevel}
         onTranspose={handleSemitones}
         onTuning={setTuning}
+        onPrint={scoreReady ? () => scoreControlRef.current?.print() : undefined}
       />
 
       <ScoreView
@@ -262,6 +345,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         level={level}
         transpose={semitones}
         tuning={tuning}
+        onReady={setScoreReady}
         callbacks={{
           play: () => {
             void toggleTo(true);

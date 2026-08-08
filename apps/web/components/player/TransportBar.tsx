@@ -6,10 +6,19 @@ interface Props {
   duration: number;
   rate: number;
   semitones: number;
+  /** A-B 구간. 아직 안 찍었으면 null */
+  loopStart: number | null;
+  loopEnd: number | null;
+  metronome: boolean;
+  /** 비트 격자가 없으면 메트로놈을 켤 수 없다 */
+  metronomeAvailable: boolean;
   onToggle: () => void;
   onSeek: (seconds: number) => void;
   onRate: (rate: number) => void;
   onSemitones: (semitones: number) => void;
+  onLoopA: () => void;
+  onLoopB: () => void;
+  onMetronome: () => void;
 }
 
 const RATE_PRESETS = [0.5, 0.75, 0.9, 1];
@@ -27,11 +36,26 @@ export default function TransportBar({
   duration,
   rate,
   semitones,
+  loopStart,
+  loopEnd,
+  metronome,
+  metronomeAvailable,
   onToggle,
   onSeek,
   onRate,
   onSemitones,
+  onLoopA,
+  onLoopB,
+  onMetronome,
 }: Props) {
+  const looping = loopStart !== null && loopEnd !== null;
+  const toggleClass = (on: boolean) =>
+    `rounded px-2 py-1 text-xs transition ${
+      on
+        ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+        : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300"
+    }`;
+
   return (
     <section className="space-y-4">
       <div className="flex items-center gap-3">
@@ -111,8 +135,50 @@ export default function TransportBar({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-neutral-600 dark:text-neutral-400">구간 반복</span>
+          <button
+            onClick={onLoopA}
+            className={toggleClass(loopStart !== null)}
+            aria-pressed={loopStart !== null}
+            title="현재 위치를 시작점으로. 다시 누르면 해제"
+          >
+            {loopStart === null ? "A" : `A ${fmt(loopStart)}`}
+          </button>
+          <button
+            onClick={onLoopB}
+            className={toggleClass(loopEnd !== null)}
+            aria-pressed={loopEnd !== null}
+            title="현재 위치를 끝점으로. 다시 누르면 해제"
+          >
+            {loopEnd === null ? "B" : `B ${fmt(loopEnd)}`}
+          </button>
+          <span className="text-xs text-neutral-500">
+            {looping ? "반복 중" : "마디 경계로 맞춰집니다"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onMetronome}
+            disabled={!metronomeAvailable}
+            className={`${toggleClass(metronome)} disabled:cursor-not-allowed disabled:opacity-40`}
+            aria-pressed={metronome}
+            title={
+              metronomeAvailable
+                ? "비트 격자에 맞춰 클릭을 냅니다"
+                : "이 곡에는 비트 격자가 없습니다"
+            }
+          >
+            메트로놈
+          </button>
+        </div>
+      </div>
+
       <p className="text-xs text-neutral-500">
         속도를 바꿔도 음정은 유지됩니다. 피치는 반음 단위로 따로 조절합니다.
+        구간 반복과 메트로놈은 배속을 바꿔도 그대로 따라옵니다.
       </p>
     </section>
   );

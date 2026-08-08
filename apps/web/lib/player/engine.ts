@@ -61,6 +61,60 @@ export type Gains = Record<StemName, number>;
 
 export const DEFAULT_GAINS: Gains = { drums: 1, bass: 1, vocals: 1, other: 1 };
 
+/**
+ * 비트 격자 (`data/{hash}/beats.json`).
+ * 값은 전부 **입력 타임라인의 초**다 — 배속을 바꿔도 이 값은 변하지 않는다.
+ */
+export interface BeatGrid {
+  beats: number[];
+  downbeats: number[];
+}
+
+/** 메트로놈 스케줄러 주기(초). 타이머 지터를 흡수하려면 lookahead가 이보다 넉넉해야 한다 */
+const METRONOME_TICK_SEC = 0.025;
+/** 앞서 채워둘 창(초) */
+const METRONOME_LOOKAHEAD_SEC = 0.1;
+/** 클릭 한 방의 길이(초) */
+const CLICK_SEC = 0.05;
+const DOWNBEAT_HZ = 1000;
+const BEAT_HZ = 800;
+const DOWNBEAT_PEAK = 0.6;
+const BEAT_PEAK = 0.3;
+/**
+ * 입력→출력 환산 기준점을 다시 잡는 임계(초).
+ * 워크릿 메시지 도착 지연(수 ms~수십 ms)에 반응해 기준점이 흔들리면 클릭 간격이
+ * 그대로 떨린다. 시크·되감기 같은 큰 점프만 걸러낼 만큼 크게 잡는다.
+ */
+const CLOCK_RESYNC_SEC = 0.15;
+/** 검출 다운비트를 비트 배열에 붙일 때 허용하는 오차(초). 균일 격자면 값이 정확히 일치한다 */
+const DOWNBEAT_MATCH_SEC = 0.06;
+
+/** 정렬된 배열에서 value 이상인 첫 인덱스 */
+function lowerBound(values: number[], value: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (values[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * 가장 가까운 마디 시작 시각으로 맞춘다. A-B 구간을 마디 단위로 잡기 위한 것 —
+ * 사람이 초 단위로 찍은 경계는 거의 항상 마디 중간이라 반복이 어색해진다.
+ */
+export function snapToDownbeat(seconds: number, downbeats: number[]): number {
+  if (downbeats.length === 0) return seconds;
+  const i = lowerBound(downbeats, seconds);
+  if (i === 0) return downbeats[0];
+  if (i >= downbeats.length) return downbeats[downbeats.length - 1];
+  const before = downbeats[i - 1];
+  const after = downbeats[i];
+  return seconds - before <= after - seconds ? before : after;
+}
+
 /** 베이시스트 프리셋 — 8채널 게인 구조에서 공짜로 나온다 */
 export const PRESETS: Record<string, { label: string; gains: Gains }> = {
   all: { label: "전체", gains: { drums: 1, bass: 1, vocals: 1, other: 1 } },
@@ -106,6 +160,20 @@ export class StemPlayer {
   private _loop: { start: number; end: number } | null = null;
   /** 그래프 생성 전에 들어온 seek. 첫 play에서 반영한다 */
   private _pendingSeek: number | null = null;
+
+  // --- 메트로놈 ---
+  private _beats: number[] = [];
+  /** _beats와 같은 길이. 다운비트면 true */
+  private _accents: boolean[] = [];
+  private _metronome = false;
+  private _metroTimer: number | null = null;
+  /** 입력 시각 t의 출력 시각 = _metroBase + t / _rate. null이면 아직 기준점이 없다 */
+  private _metroBase: number | null = null;
+  /** 다음에 볼 _beats 인덱스. -1이면 현재 위치에서 다시 찾는다 */
+  private _metroCursor = -1;
+  private _metroLastOutput = 0;
+  /** 이미 예약해둔 클릭. 끌 때 취소하지 않으면 lookahead만큼 더 울린다 */
+  private _pendingClicks: OscillatorNode[] = [];
 
   private constructor(
     ctx: AudioContext | OfflineAudioContext,
@@ -175,12 +243,11 @@ export class StemPlayer {
     });
     merger.connect(ctx.destination);
 
-    if (this.options.onPosition) {
-      stretch.setUpdateInterval(
-        this.options.positionInterval ?? 0.05,
-        this.options.onPosition,
-      );
-    }
+    // 위치 콜백은 부모에게 전달하기 전에 메트로놈의 시계 기준점부터 잡는다.
+    // 입력 타임라인을 알 수 있는 통로가 이것뿐이다.
+    stretch.setUpdateInterval(this.options.positionInterval ?? 0.05, (t) =>
+      this.handleTime(t),
+    );
 
     this.stretch = stretch;
     return stretch;
@@ -219,6 +286,10 @@ export class StemPlayer {
     return this._loop ? { ...this._loop } : null;
   }
 
+  get metronome(): boolean {
+    return this._metronome;
+  }
+
   async play(): Promise<void> {
     // 브라우저 자동재생 정책 — 사용자 제스처 이후에만 resume이 통한다.
     // resume을 먼저 해야 워크릿이 돌기 시작하고, 그래야 addBuffers가 완료된다.
@@ -234,11 +305,13 @@ export class StemPlayer {
     );
     this._pendingSeek = null;
     this._playing = true;
+    if (this._metronome) this.startMetronomeTimer();
   }
 
   pause(): void {
     this.stretch?.stop();
     this._playing = false;
+    this.stopMetronomeTimer();
   }
 
   seek(seconds: number): void {
@@ -277,21 +350,174 @@ export class StemPlayer {
     for (const stem of STEM_ORDER) this.setGain(stem, preset.gains[stem]);
   }
 
-  setLoop(start: number, end: number): void {
-    if (end <= start) return;
+  /**
+   * A-B 구간 반복. 한쪽이라도 null이거나 끝이 시작보다 앞이면 해제로 본다.
+   *
+   * 경계는 **입력 타임라인 기준**이라 배속·피치를 바꿔도 다시 환산할 필요가 없다.
+   * 워크릿이 입력 시각으로 되감기 때문이다(SignalsmithStretch.mjs의 process:
+   * `inputTime >= loopEnd`면 segment.input을 loopLength만큼 뺀다).
+   */
+  setLoop(start: number | null, end: number | null): void {
+    if (start === null || end === null || end <= start) {
+      if (!this._loop) return;
+      this._loop = null;
+      this.applySchedule({ active: this._playing });
+      return;
+    }
     this._loop = { start, end };
-    this.applySchedule({ active: this._playing, input: start });
+    // 이미 구간 안에 있으면 위치를 건드리지 않는다. 재생 중에 B를 찍었다고
+    // 소리가 앞으로 튀면 어디를 반복하는지 확인할 수가 없다.
+    const pos = this.position;
+    const inside = pos >= start && pos < end;
+    this.applySchedule(
+      inside ? { active: this._playing } : { active: this._playing, input: start },
+    );
   }
 
   clearLoop(): void {
-    this._loop = null;
-    this.applySchedule({ active: this._playing });
+    this.setLoop(null, null);
+  }
+
+  /**
+   * 메트로놈이 칠 비트 격자. beats.json을 그대로 넘긴다.
+   * downbeats는 beats와 값이 같을 수도(균일 격자) 따로 검출된 것일 수도 있어
+   * 최근접 매칭으로 강세를 붙인다.
+   */
+  setBeatGrid(grid: BeatGrid | null): void {
+    this._metroCursor = -1;
+    if (!grid || grid.beats.length === 0) {
+      this._beats = [];
+      this._accents = [];
+      return;
+    }
+    const beats = [...grid.beats].sort((a, b) => a - b);
+    const accents = new Array<boolean>(beats.length).fill(false);
+    for (const d of grid.downbeats ?? []) {
+      const i = lowerBound(beats, d);
+      for (const c of [i - 1, i]) {
+        if (c >= 0 && c < beats.length && Math.abs(beats[c] - d) <= DOWNBEAT_MATCH_SEC) {
+          accents[c] = true;
+          break;
+        }
+      }
+    }
+    this._beats = beats;
+    this._accents = accents;
+  }
+
+  setMetronome(enabled: boolean): void {
+    this._metronome = enabled;
+    if (enabled && this._playing) this.startMetronomeTimer();
+    else this.stopMetronomeTimer();
   }
 
   async close(): Promise<void> {
+    this.stopMetronomeTimer();
     this.stretch?.stop();
     // OfflineAudioContext에는 close()가 없다
     if ("close" in this.ctx) await (this.ctx as AudioContext).close();
+  }
+
+  /**
+   * 워크릿이 알려주는 입력 시각. 부모 콜백보다 먼저 시계 기준점을 갱신한다.
+   *
+   * 입력·출력 시각 모두 같은 AudioContext 시계를 쓰므로 기울기(1/rate)는 정확하다.
+   * 그래서 기준점만 유지하면 드리프트가 없고, 매번 다시 잡으면 메시지 도착
+   * 지터가 그대로 클릭 흔들림이 된다. 큰 점프일 때만 다시 잡는다.
+   */
+  private handleTime(input: number): void {
+    const base = this.ctx.currentTime - input / this._rate;
+    if (this._metroBase === null || Math.abs(base - this._metroBase) > CLOCK_RESYNC_SEC) {
+      this._metroBase = base;
+      this._metroCursor = -1;
+    }
+    this.options.onPosition?.(input);
+  }
+
+  private startMetronomeTimer(): void {
+    if (this._metroTimer !== null) return;
+    // OfflineAudioContext에는 실시간 시계가 없어 lookahead 스케줄링이 성립하지 않는다
+    if (!("close" in this.ctx)) return;
+    this._metroTimer = window.setInterval(
+      () => this.metronomeTick(),
+      METRONOME_TICK_SEC * 1000,
+    );
+  }
+
+  private stopMetronomeTimer(): void {
+    if (this._metroTimer === null) return;
+    window.clearInterval(this._metroTimer);
+    this._metroTimer = null;
+    this._metroCursor = -1;
+    this._metroLastOutput = 0;
+    for (const osc of this._pendingClicks) osc.stop();
+    this._pendingClicks = [];
+  }
+
+  /**
+   * 앞으로 METRONOME_LOOKAHEAD_SEC 안에 울릴 클릭을 미리 예약한다.
+   * setInterval은 시각이 부정확하지만, 예약 자체는 AudioContext 시계로 하므로
+   * 타이머가 늦어도 소리 위치는 흔들리지 않는다.
+   */
+  private metronomeTick(): void {
+    if (!this._playing || !this._metronome || this._beats.length === 0) return;
+    let base = this._metroBase;
+    if (base === null) return;
+
+    const now = this.ctx.currentTime;
+    const horizon = now + METRONOME_LOOKAHEAD_SEC;
+    if (this._metroCursor < 0) {
+      this._metroCursor = lowerBound(this._beats, (now - base) * this._rate);
+    }
+
+    // 되감기 구간에 비트가 하나도 없으면 무한 루프가 되므로 횟수를 묶는다
+    let wraps = 0;
+    while (wraps <= 2) {
+      const loop = this._loop;
+      const cursor = this._metroCursor;
+      const beat = cursor < this._beats.length ? this._beats[cursor] : null;
+
+      if (loop && (beat === null || beat >= loop.end)) {
+        // 워크릿보다 앞서 스케줄하므로 되감기도 우리가 먼저 반영해야 클릭이 끊기지
+        // 않는다. 입력 시각이 loopLength만큼 뒤로 가는 것과 같은 뜻이다.
+        base += (loop.end - loop.start) / this._rate;
+        this._metroBase = base;
+        this._metroCursor = lowerBound(this._beats, loop.start);
+        wraps++;
+        continue;
+      }
+      if (beat === null) return; // 루프가 없으면 곡 끝에서 멈춘다
+
+      const out = base + beat / this._rate;
+      if (out > horizon) return;
+      this._metroCursor = cursor + 1;
+      // 기준점이 다시 잡히면 같은 비트를 두 번 볼 수 있다. 출력 시각으로 거른다.
+      if (out >= now && out > this._metroLastOutput + 0.001) {
+        this.scheduleClick(out, this._accents[cursor]);
+        this._metroLastOutput = out;
+      }
+    }
+  }
+
+  /** 클릭 한 방. 오실레이터 + 짧은 감쇠 엔벨로프 */
+  private scheduleClick(at: number, accent: boolean): void {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = accent ? DOWNBEAT_HZ : BEAT_HZ;
+    // exponentialRampToValueAtTime은 0을 받지 못한다(값이 그대로 멈춘다)
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(accent ? DOWNBEAT_PEAK : BEAT_PEAK, at + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + CLICK_SEC);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(at);
+    osc.stop(at + CLICK_SEC + 0.02);
+    this._pendingClicks.push(osc);
+    osc.onended = () => {
+      const i = this._pendingClicks.indexOf(osc);
+      if (i >= 0) this._pendingClicks.splice(i, 1);
+    };
   }
 
   /**
@@ -300,6 +526,10 @@ export class StemPlayer {
    */
   private applySchedule(extra: Record<string, unknown>): void {
     if (!this.stretch) return;  // 아직 재생 전 — 값만 기억해두고 첫 play에서 반영된다
+    // 속도·위치가 바뀌면 입력→출력 환산이 통째로 달라진다. 다음 위치 콜백에서
+    // 다시 잡게 비워둔다.
+    this._metroBase = null;
+    this._metroCursor = -1;
     this.stretch.schedule({
       output: this.ctx.currentTime,
       rate: this._rate,

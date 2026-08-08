@@ -21,6 +21,8 @@ import { ORIGINAL_LEVEL } from "./ScoreControls";
  */
 export interface ScoreControl {
   setPlaying(playing: boolean): void;
+  /** 브라우저 인쇄 창을 띄운다. 여기서 PDF로 저장한다 */
+  print(): void;
 }
 
 interface Props {
@@ -41,12 +43,23 @@ interface Props {
   transpose?: number;
   /** 튜닝 프리셋. 반음 내림 튜닝을 쓰면 이조 없이 키를 내릴 수 있다 */
   tuning?: string;
+  /** 악보가 그려졌는지 부모에게 알린다. 인쇄 버튼을 띄울지 판단하는 데 쓴다 */
+  onReady?: (ready: boolean) => void;
 }
 
 type Status = "loading" | "ready" | "empty" | "error";
 
 /** 한 행에 놓을 마디 수. 참조 악보(akbobada)가 4마디씩이다. */
 const BARS_PER_ROW = 4;
+
+/**
+ * 자동 넘김 뷰가 한 번에 보여줄 마디 수. 행당 마디 수와 같게 두어 한 행만 남긴다.
+ * 창은 1·5·9…처럼 고정 경계로 끊는다 — 커서가 지날 때마다 한 마디씩 밀면
+ * 악보가 계속 흔들려 읽을 수가 없다.
+ */
+const PAGE_BARS = BARS_PER_ROW;
+
+type ViewMode = "continuous" | "paged";
 
 /** 악보를 다시 그릴 때 워커가 헤더로 알려주는 것들 */
 interface ScoreMeta {
@@ -65,6 +78,7 @@ export default function ScoreView({
   level = ORIGINAL_LEVEL,
   transpose = 0,
   tuning,
+  onReady,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
@@ -77,6 +91,13 @@ export default function ScoreView({
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState("");
   const [meta, setMeta] = useState<ScoreMeta | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("continuous");
+  // 창 이동은 alphaTab 이벤트 안에서 일어난다. 그 시점의 값을 읽어야 하므로
+  // 상태가 아니라 ref에 둔다(리렌더를 기다리면 창이 한 박 늦게 움직인다).
+  const viewModeRef = useRef<ViewMode>("continuous");
+  /** 현재 창의 첫 마디. alphaTab의 startBar와 같은 1-based */
+  const windowStartRef = useRef(1);
+  const onReadyRef = useRef(onReady);
 
   // 렌더 중에 ref를 쓰면 안 된다(react-hooks/refs). effect에서 동기화한다.
   // 부모가 매 렌더마다 새 콜백 객체를 만들어도 alphaTab 배선을 다시 하지 않게
@@ -85,9 +106,34 @@ export default function ScoreView({
     callbacksRef.current = callbacks;
   }, [callbacks]);
 
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
   const applyTex = useCallback((tex: string) => {
     if (apiRef.current) apiRef.current.tex(tex);
     else pendingTexRef.current = tex;
+  }, []);
+
+  /**
+   * 표시 범위를 설정에 반영하고 다시 그린다.
+   *
+   * `display.startBar`는 1-based 마디 번호, `barCount`는 −1이 전체다.
+   * 설정만 바꾸면 아무 일도 일어나지 않는다 — updateSettings()로 내려보내고
+   * render()로 다시 그려야 한다(alphaTab.d.ts의 updateSettings 예제).
+   */
+  const applyWindow = useCallback((mode: ViewMode, startBar: number) => {
+    const api = apiRef.current;
+    if (!api?.settings) return;
+    const nextStart = mode === "paged" ? startBar : 1;
+    const nextCount = mode === "paged" ? PAGE_BARS : -1;
+    const display = api.settings.display;
+    // 같은 범위로 다시 그리면 커서·스크롤만 흔들린다
+    if (display.startBar === nextStart && display.barCount === nextCount) return;
+    display.startBar = nextStart;
+    display.barCount = nextCount;
+    api.updateSettings();
+    api.render();
   }, []);
 
   // alphaTab 인스턴스는 곡마다 한 번만 만든다. 난이도·이조가 바뀔 때
@@ -154,6 +200,14 @@ export default function ScoreView({
               track.defaultSystemsLayout = BARS_PER_ROW;
               track.systemsLayout = [];
             }
+            // alphaTab은 트랙을 지정하지 않으면 **첫 트랙만** 그린다(d.ts:699).
+            // 3단 악보는 Vocal이 첫 트랙이라 베이스가 통째로 사라진다.
+            // scoreLoaded는 renderTracks로도 다시 발화하므로, 이미 전 트랙을
+            // 그리고 있으면 다시 부르지 않는다(무한 재렌더 방지).
+            const all = loaded.tracks ?? [];
+            if (all.length > 1 && api.tracks?.length !== all.length) {
+              api.renderTracks(all);
+            }
           },
         );
 
@@ -162,6 +216,22 @@ export default function ScoreView({
             setError(String(e));
             setStatus("error");
           }
+        });
+
+        // 자동 넘김 — 연주 중인 마디가 창을 벗어나면 그 마디를 담는 창으로 옮긴다.
+        // 재생 마디는 alphaTab이 커서를 옮길 때 같이 주는 Beat에서 얻는다
+        // (beat.voice.bar.index는 0-based). 위치→마디 환산을 따로 하면 커서와
+        // 창이 서로 다른 마디를 가리킬 수 있다.
+        api.playedBeatChanged.on((beat: { voice?: { bar?: { index?: number } } }) => {
+          if (disposed) return;
+          const index = beat?.voice?.bar?.index;
+          if (typeof index !== "number") return;
+          // 전체 악보를 보는 동안에도 창 번호는 따라간다. 그래야 뷰를 바꾼
+          // 순간 첫 마디가 아니라 연주 중인 마디가 보인다.
+          const start = Math.floor(index / PAGE_BARS) * PAGE_BARS + 1;
+          if (start === windowStartRef.current) return;
+          windowStartRef.current = start;
+          if (viewModeRef.current === "paged") applyWindow("paged", start);
         });
 
         api.renderFinished.on(() => {
@@ -189,10 +259,18 @@ export default function ScoreView({
                   if (playing) api.play();
                   else api.pause();
                 },
+                print: () => {
+                  // 인쇄는 화면 뷰와 무관하게 전곡을 낸다. 자동 넘김 상태에서는
+                  // startBar/barCount가 4마디로 좁혀져 있으므로 여기서 되돌린다.
+                  api.print("", {
+                    display: { barsPerRow: BARS_PER_ROW, startBar: 1, barCount: -1 },
+                  });
+                },
               };
             }
           }
           setStatus("ready");
+          onReadyRef.current?.(true);
         });
 
         apiRef.current = api;
@@ -210,6 +288,7 @@ export default function ScoreView({
 
     return () => {
       disposed = true;
+      onReadyRef.current?.(false);
       if (controlRef) controlRef.current = null;
       bridgeRef.current?.destroy();
       bridgeRef.current = null;
@@ -263,6 +342,13 @@ export default function ScoreView({
     bridgeRef.current?.updatePosition(position);
   }, [position]);
 
+  // 뷰를 바꾸면 표시 범위를 다시 건다. status가 바뀔 때도 한 번 걸어
+  // 인스턴스가 늦게 준비된 경우를 메운다(applyWindow가 같은 범위면 건너뛴다).
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+    applyWindow(viewMode, windowStartRef.current);
+  }, [viewMode, status, applyWindow]);
+
   const isReduced = level < ORIGINAL_LEVEL;
 
   return (
@@ -284,6 +370,29 @@ export default function ScoreView({
           {`키를 옮기면서 ${meta.octaveFolded}개 음이 4현 음역을 벗어나 옥타브를 올려 적었습니다.`}
         </p>
       )}
+
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-neutral-600 dark:text-neutral-400">보기</span>
+        {(
+          [
+            { key: "continuous", label: "전체 악보" },
+            { key: "paged", label: `${PAGE_BARS}마디 자동 넘김` },
+          ] as const
+        ).map((v) => (
+          <button
+            key={v.key}
+            onClick={() => setViewMode(v.key)}
+            className={`rounded px-2 py-1 text-xs transition ${
+              viewMode === v.key
+                ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300"
+            }`}
+            aria-pressed={viewMode === v.key}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
 
       {status === "loading" && <p className="text-sm text-neutral-500">악보를 그리는 중…</p>}
 
