@@ -46,7 +46,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 
 from .quantize import Bar, QuantizedNote, QuantizedScore
@@ -308,11 +308,40 @@ def reduce_score(
     target_sub = prof.subdivision if prof.uniform_rhythm else score.subdivision
     bars: list[Bar] = []
 
+    # 참조 악보(akbobada 초급판)의 문법은 "곡 지배 밀도로 페달" — 마디마다
+    # 밀도가 출렁이지 않는다. 마디별 검출 밀도를 그대로 따르면 **검출이 덜
+    # 잡힌 마디만 4분음표로 꺼져서** 같은 그루브가 다른 리듬으로 적힌다
+    # (드라우닝 9~12마디 실측). 그래서 곡 전체의 최빈 템플릿 밀도를 구해,
+    # 활동이 그 절반 이상인 마디는 지배 밀도로 통일한다. 절반 미만(픽업·
+    # 인트로 꼬리)은 마디별 밀도를 유지한다 — 안 친 구간에 음을 만들지 않는다.
+    #
+    # 근음 옥타브도 같은 원리로 통일한다. 검출이 옥타브 위(배음·주법)로 잡힌
+    # 마디는 그 마디만 높게 적히는데, 참조 악보는 같은 코드면 같은 저음역이다.
+    # 곡 안에서 그 피치클래스가 근음으로 쓰인 가장 낮은 옥타브로 내린다
+    # (피치클래스는 그대로 — 근음 불변식 유지).
+    modal_count = 0
+    pc_floor: dict[int, int] = {}
+    if prof.uniform_rhythm:
+        counts: list[int] = []
+        for bar in score.bars:
+            r = bar_root(bar)
+            if r is None:
+                continue
+            cap = min(prof.max_notes_per_bar, bar.beats_per_bar * target_sub)
+            counts.append(_template_count(len(bar.notes), cap))
+            pc_floor[r % 12] = min(pc_floor.get(r % 12, r), r)
+        if counts:
+            modal_count = Counter(counts).most_common(1)[0][0]
+
     for bar in score.bars:
         root = bar_root(bar)
 
         if prof.uniform_rhythm:
-            new_bar, stats = _templated_bar(bar, prof, target_sub, root)
+            if root is not None:
+                root = pc_floor.get(root % 12, root)
+            new_bar, stats = _templated_bar(
+                bar, prof, target_sub, root, count_hint=modal_count
+            )
             if stats["templated"]:
                 report.templated_bars += 1
             else:
@@ -435,12 +464,17 @@ def _colour_pitch(
 
 
 def _templated_bar(
-    bar: Bar, prof: LevelProfile, subdivision: int, root: int | None
+    bar: Bar, prof: LevelProfile, subdivision: int, root: int | None,
+    count_hint: int = 0,
 ) -> tuple[Bar, dict]:
     """마디를 균일 리듬으로 다시 적고 앵커를 얹는다.
 
     순서가 중요하다 — 균일 격자를 먼저 깔고, 그 위에 앵커(다운비트·시그니처
     당김음)를 얹는다. 앵커를 나중에 얹으므로 격자에 없는 자리라도 살아남는다.
+
+    count_hint는 곡 지배 밀도(reduce_score가 계산). 이 마디의 검출 활동이 그
+    절반 이상이면 지배 밀도로 페달한다 — 검출 누락 마디가 혼자 다른 리듬으로
+    꺼지는 것을 막는다(참조 악보 문법).
     """
     slots_per_bar = bar.beats_per_bar * subdivision
     empty = replace(bar, slots_per_bar=slots_per_bar, notes=[])
@@ -450,6 +484,8 @@ def _templated_bar(
         return empty, stats
 
     count = _template_count(len(bar.notes), min(prof.max_notes_per_bar, slots_per_bar))
+    if count_hint and len(bar.notes) * 2 >= count_hint:
+        count = min(count_hint, slots_per_bar)
     if count <= 0:
         return empty, stats
 

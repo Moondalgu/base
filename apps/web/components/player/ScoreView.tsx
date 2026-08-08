@@ -166,6 +166,10 @@ export default function ScoreView({
             // "if there are 3 bars and all define scale 1, they are sized evenly").
             layoutMode: alphaTab.LayoutMode.Parchment,
             scale: 0.9,
+            // 음표 수평 간격(Gourlay 스프링) 강도. 기본 1은 16분·가사가 낀
+            // 마디에서 음표가 맞닿는다(SVG 실측 p10=0px). 페이지 폭 확장과
+            // 함께 참조 악보 수준의 여백을 만든다.
+            stretchForce: 1.25,
           },
           notation: {
             // TAB 줄 아래에 리듬 기둥을 그린다. 없으면 음표 길이를 알 수 없다.
@@ -421,7 +425,7 @@ export default function ScoreView({
         항상 자리를 잡아두고 준비 전에는 투명도만 낮춘다.
       */}
       <div
-        className={`max-h-[420px] overflow-auto rounded border border-neutral-200 bg-white transition-opacity dark:border-neutral-800 ${
+        className={`max-h-[560px] overflow-auto rounded border border-neutral-200 bg-white transition-opacity dark:border-neutral-800 ${
           status === "ready" ? "opacity-100" : "opacity-0"
         }`}
         style={{ minHeight: status === "ready" ? undefined : 1 }}

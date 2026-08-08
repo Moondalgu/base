@@ -124,9 +124,24 @@ def main() -> int:
 
     print()
     print("단조성 — 레벨이 낮을수록 단순해야 한다")
-    counts = [built[lv].reduction.notes_after for lv in sorted(built)]
-    check(all(a <= b for a, b in zip(counts, counts[1:])),
-          "음 수가 레벨 순으로 증가", " <= ".join(str(c) for c in counts))
+    # **음 수 단조는 검사하지 않는다 (2026-08-08 정정).** 참조 악보(akbobada
+    # 초급판)의 문법이 "곡 지배 밀도로 페달"이라, 검출이 놓친 자리를 근음으로
+    # 채우면 초급 음 수가 원곡 채보보다 많아질 수 있다 — LVL-05(원곡이 쉬어도
+    # 다운비트에 근음)가 이미 같은 원리다. 단순함의 실체는 개수가 아니라
+    # 어휘다: 마디당 음 수가 레벨 상한을 넘지 않는지 + 피치 종류 단조로 본다.
+    from pipeline import reduce as reduce_mod
+
+    for lv in sorted(built):
+        prof = reduce_mod.profile_of(lv)
+        if not prof.uniform_rhythm:
+            continue
+        over = [
+            (bar.index, len(bar.notes))
+            for bar in built[lv].qscore.bars
+            if len(bar.notes) > prof.max_notes_per_bar + 1  # +1 = 시그니처 당김음
+        ]
+        check(not over, f"Lv{lv} 마디당 음 수 <= 상한({prof.max_notes_per_bar}+당김음)",
+              f"초과 {len(over)}마디" if over else "")
 
     # 음 수만으로는 Lv3~5를 구분할 수 없다. 도수 필터는 음을 지우지 않고
     # 근음으로 **대체**하므로 개수가 그대로다. 실제로 단순해졌는지는 쓰인

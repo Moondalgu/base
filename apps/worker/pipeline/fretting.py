@@ -60,6 +60,11 @@ W_MOVE = 0.2           # 직전 음과의 프렛 거리 (손 이동)
 W_STRING_CHANGE = 0.2  # 현 이동
 W_POSITION = 0.03      # 높은 프렛 기피 (거의 무시)
 W_OPEN_PENALTY = 0.4   # 개방현 **벌점**. 이름이 BONUS였던 시절 값(-0.8)은 정답과 반대였다
+# 얇은 현 벌점(현당). 베이스 근음은 굵은 현(E·A)으로 짚는 것이 관습이고
+# 참조 악보(akbobada)와 사람 채보(Songsterr)가 실제로 그렇다 — 우리는 같은
+# 음을 D·G현 저프렛으로 골라 자리(현·프렛) 대조에서 깎였다. 값은 아래
+# 실측으로 정한다 (eval_fretting + 골든셋 자리).
+W_THIN_STRING = 0.15
 
 
 @dataclass
@@ -236,10 +241,13 @@ def _fold_into_fret_limit(pitch: int, tuning: list[int], max_fret: int) -> int:
     return pitch
 
 
-def _position_cost(fret: int) -> float:
+def _position_cost(option: tuple[int, int], n_strings: int) -> float:
+    string, fret = option
     cost = W_POSITION * fret
     if fret == 0:
         cost += W_OPEN_PENALTY
+    # 현 인덱스 0 = 가장 얇은 현(G). 굵은 현일수록 벌점이 0에 가까워진다.
+    cost += W_THIN_STRING * (n_strings - 1 - string)
     return cost
 
 
@@ -300,7 +308,7 @@ def _viterbi(
         prev_options, prev_costs = _last_nonempty(states, costs, i)
 
         for option in options:
-            base = _position_cost(option[1])
+            base = _position_cost(option, len(tuning))
             if not prev_options:
                 row_costs.append(base)
                 row_back.append(-1)
