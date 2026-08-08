@@ -250,7 +250,7 @@ def score_metadata(content_hash: str, *, transpose: int = 0) -> dict:
     if manifest_path.exists():
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         source = data.get("source") or {}
-        title = source.get("title") or title
+        title = clean_title(source.get("title") or title)
         artist = source.get("uploader") or source.get("artist") or ""
     return {
         "title": title,

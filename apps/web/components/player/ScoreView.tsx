@@ -139,6 +139,15 @@ export default function ScoreView({
   // --- 채보 보정(편집) ---
   // 클릭한 음을 원장(ledger)으로 특정해 검출 시각(srcStart) 기반 보정을 건다.
   // 보정은 원본 검출을 고치는 것이라(pipeline/edits.py) 모든 난이도에 전파된다.
+  // --- 악보 소스: 자동 채보 vs 사용자 악보(판독 적재) ---
+  // 사용자 악보는 오디오 마디 순서로 펼쳐져 와서(worker reference-tex)
+  // 커서·시크가 그대로 작동한다. 보정·난이도는 자동 채보 전용.
+  const [scoreSource, setScoreSource] = useState<"auto" | "reference">("auto");
+  const [referenceAvailable, setReferenceAvailable] = useState<boolean | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [editMode, setEditMode] = useState(false);
   const editModeRef = useRef(false);
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -169,6 +178,10 @@ export default function ScoreView({
     editModeRef.current = editMode;
     if (!editMode) setSelected(null);
   }, [editMode]);
+  // 사용자 악보 모드에서는 보정이 성립하지 않는다(자동 채보 원본 대상).
+  useEffect(() => {
+    if (scoreSource === "reference") setEditMode(false);
+  }, [scoreSource]);
 
   // 렌더 중에 ref를 쓰면 안 된다(react-hooks/refs). effect에서 동기화한다.
   // 부모가 매 렌더마다 새 콜백 객체를 만들어도 alphaTab 배선을 다시 하지 않게
@@ -506,16 +519,28 @@ export default function ScoreView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
 
-  // 난이도·이조·튜닝이 바뀌면 악보만 다시 받아 갈아끼운다.
+  // 난이도·이조·튜닝·악보 소스가 바뀌면 악보만 다시 받아 갈아끼운다.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const params = new URLSearchParams({
-        level: String(level),
-        transpose: String(transpose),
-      });
-      if (tuning) params.set("tuning", tuning);
       try {
+        if (scoreSource === "reference") {
+          const res = await fetch(`/api/scores/${hash}/reference`);
+          if (cancelled) return;
+          if (!res.ok) {
+            setReferenceAvailable(false);
+            setScoreSource("auto");
+            return;
+          }
+          setReferenceAvailable(true);
+          applyTex(await res.text());
+          return;
+        }
+        const params = new URLSearchParams({
+          level: String(level),
+          transpose: String(transpose),
+        });
+        if (tuning) params.set("tuning", tuning);
         const res = await fetch(`/api/scores/${hash}?${params}`);
         if (cancelled) return;
         if (!res.ok) {
@@ -542,7 +567,58 @@ export default function ScoreView({
     return () => {
       cancelled = true;
     };
-  }, [hash, level, transpose, tuning, applyTex, editsVersion]);
+  }, [hash, level, transpose, tuning, applyTex, editsVersion, scoreSource]);
+
+  // 사용자 악보가 있는 곡인지 — 소스 토글 노출 여부. 곡이 바뀌면 다시 본다.
+  useEffect(() => {
+    let cancelled = false;
+    setScoreSource("auto");
+    setUploadMsg("");
+    (async () => {
+      try {
+        const res = await fetch(`/api/scores/${hash}/reference`, { method: "GET" });
+        if (!cancelled) setReferenceAvailable(res.ok);
+      } catch {
+        if (!cancelled) setReferenceAvailable(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hash]);
+
+  /** 악보 이미지 업로드 → 판독 적재 → 내 악보로 전환. 페이지당 ~40초. */
+  const uploadReference = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0 || uploading) return;
+      setUploading(true);
+      setUploadMsg(`판독 중… (${files.length}페이지, 페이지당 ~40초)`);
+      try {
+        const form = new FormData();
+        for (const f of Array.from(files)) form.append("files", f);
+        const res = await fetch(`/api/scores/${hash}/reference`, {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data) {
+          setReferenceAvailable(true);
+          setScoreSource("reference");
+          const failed = (data.failedPages ?? []).length;
+          setUploadMsg(
+            `악보 ${data.bars}마디 적재${failed ? ` (${failed}페이지 판독 실패)` : ""}`,
+          );
+        } else {
+          setUploadMsg(data?.detail ?? data?.error ?? "판독에 실패했습니다");
+        }
+      } catch {
+        setUploadMsg("업로드에 실패했습니다");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [hash, uploading],
+  );
 
   // 편집 모드가 켜져 있는 동안 원장을 들고 있는다 — 클릭한 비트를
   // (마디, 슬롯)으로 환산해 검출 시각을 찾는 유일한 지도다.
@@ -757,9 +833,57 @@ export default function ScoreView({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 악보 소스 — 사용자가 자기 악보를 넣으면 그 악보로 연습한다.
+              오디오 마디 순서로 펼쳐져 와서 커서·시크가 그대로 동작한다. */}
+          {referenceAvailable && (
+            <div className="inline-flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-neutral-800">
+              {(
+                [
+                  { key: "auto", label: "자동 채보" },
+                  { key: "reference", label: "내 악보" },
+                ] as const
+              ).map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setScoreSource(s.key)}
+                  className={`rounded-md px-2.5 py-1 text-xs transition ${
+                    scoreSource === s.key
+                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  }`}
+                  aria-pressed={scoreSource === s.key}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void uploadReference(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            title="가진 악보 이미지를 넣으면 판독해서 이 곡의 오디오에 맞춰 보여줍니다. 페이지당 약 40초 걸립니다."
+          >
+            {uploading ? "판독 중…" : referenceAvailable ? "악보 교체" : "내 악보 넣기"}
+          </button>
+          {uploadMsg && (
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">{uploadMsg}</span>
+          )}
           {/* 난이도 — 연습 중 바꾸는 값이라 상시 노출한다. 상세(이조·튜닝)는
-              여전히 악보 설정 패널에 있고 이 칩은 같은 상태를 바꾸는 지름길이다. */}
-          {onLevel && levels && levels.length > 1 && (
+              여전히 악보 설정 패널에 있고 이 칩은 같은 상태를 바꾸는 지름길이다.
+              사용자 악보 모드에서는 난이도·보정이 자동 채보 전용이라 숨긴다. */}
+          {scoreSource === "auto" && onLevel && levels && levels.length > 1 && (
             <div className="inline-flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-neutral-800">
               {levels.map((l) => (
                 <button
@@ -777,18 +901,20 @@ export default function ScoreView({
               ))}
             </div>
           )}
-          <button
-            onClick={() => setEditMode((v) => !v)}
-            className={`rounded-lg border px-2.5 py-1 text-xs transition ${
-              editMode
-                ? "border-amber-500 bg-amber-500 font-semibold text-white"
-                : "border-neutral-200 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
-            }`}
-            aria-pressed={editMode}
-            title="자동 채보가 틀린 음을 클릭해서 고칩니다. 고친 내용은 모든 난이도에 반영됩니다."
-          >
-            {editMode ? "보정 중" : "보정"}
-          </button>
+          {scoreSource === "auto" && (
+            <button
+              onClick={() => setEditMode((v) => !v)}
+              className={`rounded-lg border px-2.5 py-1 text-xs transition ${
+                editMode
+                  ? "border-amber-500 bg-amber-500 font-semibold text-white"
+                  : "border-neutral-200 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              }`}
+              aria-pressed={editMode}
+              title="자동 채보가 틀린 음을 클릭해서 고칩니다. 고친 내용은 모든 난이도에 반영됩니다."
+            >
+              {editMode ? "보정 중" : "보정"}
+            </button>
+          )}
           <span className="hidden text-xs text-neutral-500 sm:inline dark:text-neutral-400">보기</span>
           <div className="inline-flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-neutral-800">
             {(

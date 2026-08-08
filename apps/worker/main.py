@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -259,6 +259,92 @@ async def put_edits(content_hash: str, body: dict) -> Response:
     edits_mod.save(workdir, validated)
     return Response(
         content=json_mod.dumps({"edits": validated}),
+        media_type="application/json",
+    )
+
+
+@app.get("/api/scores/{content_hash}/reference-tex")
+async def reference_tex(content_hash: str) -> Response:
+    """사용자 악보(reference.json)를 오디오 마디 순서로 펼친 alphaTex.
+
+    마디 수가 자동 채보와 같아지므로(근음 DP 매핑, pipeline/reference.py
+    머리말) 웹의 커서·시크·자동넘김이 수정 없이 작동한다. 악보가 없으면 404.
+    """
+    from pipeline import reduce as reduce_mod
+    from pipeline import reference as ref_mod
+
+    workdir = jobs.DATA / content_hash
+    ref = ref_mod.load(workdir)
+    if ref is None:
+        raise HTTPException(status_code=404, detail="적재된 악보가 없습니다")
+    try:
+        built = await asyncio.to_thread(
+            jobs.build_score_variant, content_hash, level=compose.ORIGINAL_LEVEL,
+        )
+    except jobs.MissingOriginals as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    our_roots = []
+    for b in built.qscore.bars:
+        r = reduce_mod.bar_root(b)
+        our_roots.append(r % 12 if r is not None else None)
+    mapping = ref_mod.align_bars(ref, our_roots)
+    meta = jobs.score_metadata(content_hash)
+    tex = ref_mod.build_tex(ref, built.qscore, mapping, meta["title"])
+    matched = sum(1 for m in mapping if m is not None)
+    return Response(
+        content=tex,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "X-Reference-Matched": str(matched),
+            "X-Reference-Bars": str(len(ref.get("bars", []))),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/scores/{content_hash}/reference")
+async def upload_reference(content_hash: str, request: Request) -> Response:
+    """악보 이미지 업로드 → Gemini 판독 → reference.json 적재.
+
+    본문은 multipart/form-data(files). 이미지 원본은 data/<hash>/
+    reference_pages/에만 저장한다(data는 저장소 밖 — 악보는 저작물이다).
+    페이지당 ~40초 걸린다 — 프론트가 안내한다.
+    """
+    import json as json_mod
+
+    from pipeline import reference as ref_mod
+
+    workdir = jobs.DATA / content_hash
+    if not workdir.exists():
+        raise HTTPException(status_code=404, detail="곡이 없습니다")
+    form = await request.form()
+    files = [v for v in form.getlist("files") if hasattr(v, "filename")]
+    if not files:
+        raise HTTPException(status_code=400, detail="이미지 파일이 없습니다")
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail="페이지가 너무 많습니다(최대 20)")
+    pages_dir = workdir / "reference_pages"
+    pages_dir.mkdir(exist_ok=True)
+    saved: list = []
+    for i, f in enumerate(files):
+        suffix = Path(f.filename or "page.png").suffix.lower() or ".png"
+        if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
+            raise HTTPException(status_code=400, detail=f"지원 않는 형식: {suffix}")
+        dest = pages_dir / f"page_{i + 1:02d}{suffix}"
+        dest.write_bytes(await f.read())
+        saved.append(dest)
+    try:
+        out = await asyncio.to_thread(
+            ref_mod.ingest_images, saved, workdir, verbose=True
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=json_mod.dumps({
+            "bars": len(out.get("bars", [])),
+            "keySignature": out.get("keySignature"),
+            "failedPages": out.get("failedPages", []),
+        }),
         media_type="application/json",
     )
 
