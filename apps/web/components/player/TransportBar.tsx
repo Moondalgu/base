@@ -14,6 +14,8 @@ interface Props {
   metronome: boolean;
   /** 비트 격자가 없으면 메트로놈을 켤 수 없다 */
   metronomeAvailable: boolean;
+  /** 악보 연주 모드 — 원곡 베이스 대신 화면 악보를 샘플러로 연주 */
+  synthOn: boolean;
   onToggle: () => void;
   onSeek: (seconds: number) => void;
   onRate: (rate: number) => void;
@@ -21,6 +23,7 @@ interface Props {
   onLoopA: () => void;
   onLoopB: () => void;
   onMetronome: () => void;
+  onSynthToggle: () => void;
 }
 
 const RATE_PRESETS = [0.5, 0.75, 0.9, 1];
@@ -52,6 +55,7 @@ export default function TransportBar({
   loopEnd,
   metronome,
   metronomeAvailable,
+  synthOn,
   onToggle,
   onSeek,
   onRate,
@@ -59,6 +63,7 @@ export default function TransportBar({
   onLoopA,
   onLoopB,
   onMetronome,
+  onSynthToggle,
 }: Props) {
   const looping = loopStart !== null && loopEnd !== null;
 
@@ -88,6 +93,38 @@ export default function TransportBar({
           >
             <span className={playing ? "" : "translate-x-[1px]"}>{playing ? "❚❚" : "▶"}</span>
           </button>
+
+          {/* 무엇이 들리는가 — 재생 버튼 바로 옆 1급 자리. 원곡/악보 전환이
+              이 도구의 존재 이유(귀로 검증)라서 접이식 패널에 숨기지 않는다
+              (Songscription 실물 대조에서 가져온 배치 문법). */}
+          <div
+            className="inline-flex shrink-0 gap-0.5 rounded-full border border-neutral-200 p-0.5 dark:border-neutral-700"
+            title="악보 연주: 원곡 베이스를 빼고 화면 악보(현재 난이도·키)를 대신 연주합니다."
+            role="group"
+            aria-label="소리 모드"
+          >
+            {(
+              [
+                { on: false, label: "원곡" },
+                { on: true, label: "악보 연주" },
+              ] as const
+            ).map((m) => (
+              <button
+                key={m.label}
+                onClick={() => {
+                  if (synthOn !== m.on) onSynthToggle();
+                }}
+                className={`rounded-full px-2.5 py-1 text-xs transition ${
+                  synthOn === m.on
+                    ? "bg-neutral-900 font-medium text-white dark:bg-white dark:text-neutral-900"
+                    : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                }`}
+                aria-pressed={synthOn === m.on}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
 
           <div
             className="flex items-center gap-1.5"

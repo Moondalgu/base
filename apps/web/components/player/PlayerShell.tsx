@@ -381,6 +381,8 @@ export default function PlayerShell({ hash }: { hash: string }) {
         onReady={setScoreReady}
         editsVersion={editsVersion}
         onEditsChanged={() => setEditsVersion((v) => v + 1)}
+        levels={manifest?.scoreVariants?.levels}
+        onLevel={setLevel}
         callbacks={{
           play: () => {
             void toggleTo(true);
@@ -446,6 +448,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         loopEnd={loopEnd}
         metronome={metronome}
         metronomeAvailable={Boolean(beatGrid)}
+        synthOn={synthOn}
         onToggle={toggle}
         onSeek={handleSeek}
         onRate={handleRate}
@@ -453,6 +456,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         onLoopA={() => markLoop("a")}
         onLoopB={() => markLoop("b")}
         onMetronome={toggleMetronome}
+        onSynthToggle={toggleSynth}
       />
     </div>
   );

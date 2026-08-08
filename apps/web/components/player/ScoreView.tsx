@@ -52,7 +52,14 @@ interface Props {
   editsVersion?: number;
   /** 보정 저장 성공 콜백 — 부모가 editsVersion을 올려 전체(악보·연주)를 갱신한다 */
   onEditsChanged?: () => void;
+  /** 이 곡이 제공하는 난이도 단계(manifest). 두 개 이상일 때만 칩을 그린다 */
+  levels?: number[];
+  /** 난이도 전환 — 연습 중 바꾸는 값이라 접이식 패널이 아니라 악보에 붙인다 */
+  onLevel?: (level: number) => void;
 }
+
+/** 난이도 번호 → 표시 이름 (ScoreControls의 LEVELS와 같은 값) */
+const LEVEL_LABELS: Record<number, string> = { 1: "초급", 2: "중급", 3: "원본" };
 
 /** 원장 행 — 편집 UI가 쓰는 열만 */
 interface LedgerRow {
@@ -101,6 +108,8 @@ export default function ScoreView({
   barStarts,
   editsVersion = 0,
   onEditsChanged,
+  levels,
+  onLevel,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
@@ -572,6 +581,26 @@ export default function ScoreView({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 난이도 — 연습 중 바꾸는 값이라 상시 노출한다. 상세(이조·튜닝)는
+              여전히 악보 설정 패널에 있고 이 칩은 같은 상태를 바꾸는 지름길이다. */}
+          {onLevel && levels && levels.length > 1 && (
+            <div className="inline-flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-neutral-800">
+              {levels.map((l) => (
+                <button
+                  key={l}
+                  onClick={() => onLevel(l)}
+                  className={`rounded-md px-2.5 py-1 text-xs transition ${
+                    level === l
+                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  }`}
+                  aria-pressed={level === l}
+                >
+                  {LEVEL_LABELS[l] ?? `Lv${l}`}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             onClick={() => setEditMode((v) => !v)}
             className={`rounded-lg border px-2.5 py-1 text-xs transition ${
