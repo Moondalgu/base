@@ -284,12 +284,13 @@ def signature_for(tonic: int, mode: str) -> tuple[str, int]:
 # E major가 맞다(`MARKET.md` 벤치마크).
 #
 # 즉 **0.707은 맞는 답의 값이다.** 임계를 그보다 높게 두면 정답을 버린다.
-# 0.60은 그 아래에서 "명백히 안 맞는 경우"만 걸러내는 자리다.
 #
-# 더 조이려면 골든셋에 조표 정답이 있는 곡을 모아야 한다 — Songsterr 채보 중
-# `keySignature`를 담은 것이 있다(Come Together = 2샵 major). 지금 검증된 표본이
-# 한 곡이라 이 값을 좁힐 근거가 없다.
-MIN_DIATONIC_RATIO = 0.60
+# 2026-08-08 골든셋 재측정 — 검출된 조성이 있는 4곡이 **전부 정답**이었고 그
+# diatonicRatio는 0.85(VI E♭m) / 0.707(Champagne E) / 0.65(Drowning A♭) /
+# **0.58(예뻤어 E♭)**. 0.60은 검증된 정답(0.58)을 버리는 자리였다 — 참조
+# 악보(E♭, ♭3)와 대조로 확인. 검증된 정답값 아래인 0.55로 내린다.
+# 틀린 조성의 ratio 표본은 아직 없다 — 틀린 검출이 확인되면 그 값 위로 다시 잰다.
+MIN_DIATONIC_RATIO = 0.55
 
 # 최선 대 차선 점수 비율의 하한.
 #
@@ -463,3 +464,32 @@ def detect(
         )
         print(f"[chords] 베이스음별 판정: {detail}")
     return out
+
+
+def detect_and_save(cleaned, grid, audio_path: Path, workdir: Path):
+    """마디별 코드 판정 → chords.json 저장 → (이름 목록, 조성 dict | None).
+
+    웹 잡(jobs.py)·CLI(run_pipeline.py)·재생성 도구가 **전부 이 함수를 쓴다.**
+    갈라지면 경로마다 코드 유무가 달라진다 — 실제로 CLI에 이 단계가 빠져
+    드라우닝·예뻤어 산출물에 코드가 없었다(2026-08-08 발견).
+
+    코드 판정에 마디 근음이 필요한데 근음은 양자화된 마디에서 나온다. 그래서
+    여기서 양자화를 한 번 더 돈다 — 밀리초 단위라 비용이 없고, compose 안에서
+    만들면 "오디오 분석"과 "표기 조립"이 섞여 변형 요청마다 오디오를 읽게 된다.
+    """
+    from . import quantize as quantize_mod
+    from . import reduce as reduce_mod
+
+    qscore = quantize_mod.quantize(cleaned, grid)
+    bars = [
+        (b.index, b.start_sec, b.end_sec, reduce_mod.bar_root(b))
+        for b in qscore.bars
+    ]
+    detected = detect(audio_path, bars)
+    # 코드 진행이 나오면 조성은 계산으로 떨어진다. 오디오를 다시 안 본다.
+    key = detect_key(detected)
+    (workdir / "chords.json").write_text(
+        json.dumps([c.to_dict() for c in detected], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return [c.name for c in detected], (key.to_dict() if key else None)

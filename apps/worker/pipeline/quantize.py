@@ -103,11 +103,17 @@ def quantize(
     *,
     verbose: bool = False,
     force_subdivision: int | None = None,
+    force_phase: int | None = None,
 ) -> QuantizedScore:
     """정리된 노트를 마디/슬롯 좌표로 옮긴다.
 
     force_subdivision을 주면 스윙 감지를 무시하고 그 값을 쓴다.
     셋잇단 표기가 안 되는 상황의 폴백용이다.
+
+    force_phase는 **다른 트랙과 마디를 맞출 때** 쓴다. choose_phase는 "곡의
+    첫 음은 마디 1박"이라는 베이스 전제로 위상을 고르는데, 보컬처럼 위빗에서
+    시작하는 성부에 그대로 쓰면 트랙마다 마디 경계가 달라진다. 3단 악보는
+    베이스 트랙의 위상을 여기로 넘겨 한 격자를 공유한다.
     """
     if len(grid.downbeats) < 2 or len(grid.beats) < 2:
         raise ValueError("비트 그리드가 부족합니다. 비트 추적 결과를 확인하세요.")
@@ -124,7 +130,10 @@ def quantize(
     beats_per_bar = grid.beats_per_bar
     slots_per_bar = beats_per_bar * subdivision
 
-    phase, phase_corrected = choose_phase(notes, grid)
+    if force_phase is not None:
+        phase, phase_corrected = force_phase, False
+    else:
+        phase, phase_corrected = choose_phase(notes, grid)
     bars = _build_bars(grid, phase, subdivision, slots_per_bar)
     grid_times, grid_coords = _build_grid(bars, grid, phase, subdivision, slots_per_bar)
     spacing = _median_spacing(grid_times)

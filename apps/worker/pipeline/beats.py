@@ -352,12 +352,20 @@ def _uniform_beats(
 def _infer_beats_per_bar(beats: list[float], downbeats: list[float]) -> int:
     """다운비트 사이에 낀 비트 수로 박자표를 추론한다.
 
-    최빈값이 아니라 중앙값을 쓴다. 최빈값은 다운비트가 한두 군데 튀면
-    엉뚱한 값으로 끌려가는데, 이 값이 마디 길이를 결정하므로 틀리면
-    악보 전체가 틀린다.
+    **정규화를 집계보다 먼저 한다.** beat_this는 같은 곡 안에서 다운비트를
+    마디마다 찍다가 반 마디마다 찍다가 하며 섞는다 — 실측(Virtual Insanity,
+    4/4 펑크): 다운비트 간 비트 수가 {4: 52, 2: 51, 3: 9}로 쌍봉이었다.
+    이 상태에서 중앙값을 내면 두 봉우리 사이의 소수값 3에 떨어져
+    **박자표가 3/4로 오검출되고 전 마디 귀속이 깨진다.**
 
-    2박으로 나오는 경우가 흔한데(킥이 1·3박에만 있는 패턴), 실제로는
-    4/4의 절반으로 잡은 것이다. 2는 4로 승격한다.
+    2박 구간은 거의 항상 4/4의 반 마디(킥 1·3박 패턴)이고, 1박 구간은
+    인접 비트 사이에 다운비트가 중복 검출된 노이즈다. 그래서 2는 4로
+    승격하고 1은 버린 **뒤에** 중앙값을 낸다. 진짜 3/4 곡은 3이 지배해
+    중앙값이 그대로 3이 된다.
+
+    중앙값을 유지하는 이유(최빈값 아님): 다운비트가 한두 군데 튀어도
+    끌려가지 않는다. 이 값이 마디 길이를 결정하므로 틀리면 악보 전체가
+    틀린다.
     """
     if len(downbeats) < 2:
         return 4
@@ -365,16 +373,17 @@ def _infer_beats_per_bar(beats: list[float], downbeats: list[float]) -> int:
         sum(1 for b in beats if start <= b < end)
         for start, end in zip(downbeats, downbeats[1:])
     ]
-    counts = [c for c in counts if c > 0]
-    if not counts:
+    normalized = []
+    for c in counts:
+        if c <= 1:
+            continue  # 0 = 빈 구간, 1 = 중복 다운비트 노이즈
+        if c == 2:
+            c = 4     # 반 마디 다운비트 → 4/4로 승격
+        normalized.append(c)
+    if not normalized:
         return 4
 
-    value = round(statistics.median(counts))
-    if value == 2:
-        # 2박 마디는 거의 항상 4/4를 반으로 쪼갠 결과다
-        value = 4
-    elif value == 1:
-        value = 4
+    value = round(statistics.median(normalized))
     return value if value in (3, 4, 5, 6, 7) else 4
 
 

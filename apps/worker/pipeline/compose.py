@@ -57,11 +57,17 @@ def build(
     verbose: bool = False,
     chords: list[str] | None = None,
     key_signature: str | None = None,
+    vocal_notes: list[Note] | None = None,
+    vocal_syllables: list[dict] | None = None,
 ) -> BuiltScore:
     """노트와 비트 그리드로 AlphaTex를 만든다.
 
     level은 난이도(1=초급 / 2=중급 / 3=원본). transpose는 반음 단위 이조이며 재생
     피치와 같은 값을 받아야 한다 — 악보와 소리가 어긋나면 연습 도구로 쓸 수 없다.
+
+    vocal_notes를 주면 3단 악보(보컬 오선 / 베이스 오선 / TAB)가 된다. 보컬은
+    하향·운지를 타지 않고, 베이스와 **같은 격자·위상**으로만 양자화된다 —
+    위상이 갈라지면 두 트랙의 마디가 서로 밀린다.
     """
     profile = reduce.profile_of(level)   # 없는 레벨이면 여기서 걸린다
     if abs(transpose) > TRANSPOSE_LIMIT:
@@ -90,9 +96,23 @@ def build(
             qs, tuning, verbose=verbose,
             max_fret=profile.max_fret, max_move=profile.max_move,
         )
+        vocal_q = None
+        if vocal_notes:
+            # 조각 병합은 저장된 vocal_notes.json에도 적용되도록 여기서 한다 —
+            # 채보 단계에 두면 기존 산출물은 재채보(~10분) 전에는 혜택이 없다.
+            from . import transcribe_crepe as _tc
+
+            vworking = _tc.merge_vocal_fragments(
+                _transpose_vocal(vocal_notes, transpose)
+            )
+            vocal_q = quantize.quantize(
+                vworking, grid,
+                force_subdivision=qs.subdivision, force_phase=qs.phase,
+            )
         return qs, fs, report, alphatex.build(
             fs, title=title, artist=artist, include_sync=include_sync,
-            chords=chords, key_signature=key_signature,
+            chords=chords, key_signature=key_signature, vocal=vocal_q,
+            vocal_syllables=vocal_syllables,
         )
 
     subdivision_forced = False
@@ -116,6 +136,24 @@ def build(
         subdivision_forced=subdivision_forced,
         reduction=reduction,
     )
+
+
+def _transpose_vocal(notes: list[Note], semitones: int) -> list[Note]:
+    """보컬 이조 — 옥타브 접기 없이 그대로 옮긴다.
+
+    베이스의 _transpose는 4현 음역으로 접는데, 보컬 오선은 악기 음역 제약이
+    없고 참고용 멜로디이므로 원형을 유지하는 쪽이 맞다.
+    """
+    if semitones == 0:
+        return notes
+    return [
+        Note(
+            start=n.start, end=n.end, pitch=n.pitch + semitones,
+            amplitude=n.amplitude, detected_end=n.detected_end,
+            loudness=n.loudness,
+        )
+        for n in notes
+    ]
 
 
 def _transpose(

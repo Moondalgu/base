@@ -43,6 +43,11 @@ VOCAL_FMIN, VOCAL_FMAX = 80.0, 1100.0
 # 속도를 위해 정확도를 내주는 거래가 성립하지 않는다.
 MODEL = "full"
 
+# 보컬 노트 필터. 이보다 짧은 음은 가사 자음·숨소리 조각으로 본다 —
+# 베이스보다 길게 잡는다(보컬은 음절마다 음이 하나이고 음절이 이보다 짧기 어렵다).
+VOCAL_MIN_SEC = 0.10
+VOCAL_MIN_CONFIDENCE = 0.65
+
 # periodicity 하한. 0.5~0.7 구간에서 거짓 음·누락 비율이 거의 움직이지
 # 않았다. 즉 이 값에 결과가 민감하지 않다.
 CONF_THRESHOLD = 0.6
@@ -118,6 +123,59 @@ def transcribe(
             f"{len(note_events)} note events"
         )
     return note_events
+
+
+def transcribe_vocal(stem_path: Path, *, verbose: bool = False) -> list:
+    """보컬 스템 채보 → Note 목록 (3단 악보의 위 단).
+
+    베이스 후처리(bassclean.clean)는 걸지 않는다 — 배음 제거·누출 제거·음역
+    접기가 전부 베이스 전제의 판정이라 보컬에 걸면 실제 음을 깎는다.
+    짧음·약함만 여기서 거른다.
+    """
+    from .bassclean import Note
+
+    events = transcribe(
+        stem_path, verbose=verbose, fmin=VOCAL_FMIN, fmax=VOCAL_FMAX
+    )
+    return [
+        Note(
+            start=float(e[0]), end=float(e[1]), pitch=int(e[2]),
+            amplitude=float(e[3]), detected_end=float(e[1]),
+        )
+        for e in events
+        if e[1] - e[0] >= VOCAL_MIN_SEC and e[3] >= VOCAL_MIN_CONFIDENCE
+    ]
+
+
+def merge_vocal_fragments(notes: list, max_gap: float = 0.08) -> list:
+    """같은 피치의 인접 보컬 조각을 병합한다.
+
+    CREPE 분절은 반음 반올림 경계에서 음을 쪼갠다 — 비브라토가 있는 지속음이
+    같은 피치의 짧은 조각 여럿으로 나온다. 악보에서는 16분 조각 + 쉼표의
+    난수처럼 보이고, 가사 정렬에서는 조각마다 `-`가 붙어 지저분해진다.
+
+    **같은 피치만** 병합한다. 다른 피치끼리 붙이면 실제 꾸밈음·경과음을
+    먹는다. 간격 기준 80ms는 CREPE 프레임(10ms)의 흔들림과 무성 자음을
+    덮는 수준이고, 같은 음절 안의 끊김이 이보다 길기는 어렵다.
+    """
+    import copy
+
+    if not notes:
+        return notes
+    # 입력을 변조하지 않는다 — 호출자(jobs·CLI)가 같은 리스트를 다른 용도로
+    # 다시 쓸 수 있고, 표기 폴백(build_from 재호출)에서 두 번 지나간다.
+    merged = [copy.copy(notes[0])]
+    for n in notes[1:]:
+        prev = merged[-1]
+        if n.pitch == prev.pitch and n.start - prev.end <= max_gap:
+            prev.end = n.end
+            prev.detected_end = n.detected_end
+            # 확신도는 큰 쪽을 대표값으로 — 평균을 다시 내려면 길이 가중이
+            # 필요한데 여기서 그 정밀도는 쓰이지 않는다.
+            prev.amplitude = max(prev.amplitude, n.amplitude)
+        else:
+            merged.append(copy.copy(n))
+    return merged
 
 
 def _segment(f0, periodicity, hop: int = HOP) -> list[tuple]:

@@ -127,6 +127,24 @@ def assign(
             flat.append((bi, ni))
             pitches.append(note.pitch)
 
+    # 튜닝 음역 밖 음을 먼저 옥타브로 접는다. 이조 경로(compose._transpose)에는
+    # 접기가 있는데 원곡 경로에는 없어서, 개방 E 아래 음이 연주불가로 떨어져
+    # **라인에 구멍이 났다**(PRD 13.3-6). 버리는 것보다 옥타브 위가 낫다 —
+    # 근음 진행은 피치클래스로 유지된다.
+    lowest, highest = min(tuning), max(tuning) + NFRETS
+    folded_range = 0
+    for i, p in enumerate(pitches):
+        original = p
+        while p < lowest:
+            p += 12
+        while p > highest:
+            p -= 12
+        if p != original:
+            pitches[i] = p
+            folded_range += 1
+    if verbose and folded_range:
+        print(f"[fretting] 음역 밖 {folded_range}음을 옥타브 접음")
+
     # 프렛 상한을 넘는 음은 옥타브를 접어 제약 안으로 들여놓는다. 접은 결과를
     # FrettedNote.pitch에도 써야 한다 — 원래 피치를 남기면 적힌 프렛으로는 그
     # 음이 나지 않아 악보와 소리가 어긋난다.

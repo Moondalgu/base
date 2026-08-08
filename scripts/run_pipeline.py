@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "worker"))
 
 from pipeline import (  # noqa: E402
-    bassclean, beats, compose, diagnose, encode, fretting, quality, reduce,
-    separate, transcribe, transcribe_crepe,
+    bassclean, beats, chords, compose, diagnose, encode, engine_select,
+    fretting, lyrics, quality, reduce, separate, transcribe, transcribe_crepe,
 )
 from pipeline.ingest import ingest  # noqa: E402
 
@@ -39,8 +39,13 @@ def main() -> int:
     )
     parser.add_argument("--no-sync", action="store_true", help="sync 포인트 생략")
     parser.add_argument(
-        "--engine", default="crepe", choices=["crepe", "basic-pitch"],
-        help="채보 엔진. crepe가 기본(거짓 음 22.8%%→10.5%%)",
+        "--no-vocal", action="store_true",
+        help="보컬 채보 생략 (3단 악보 대신 2단 — 처리 시간 약 5분 단축)",
+    )
+    parser.add_argument(
+        "--engine", default="auto", choices=["auto", "crepe", "basic-pitch"],
+        help="채보 엔진. auto가 기본 — crepe 먼저, 커버리지 미달이면 "
+             "basic-pitch 폴백 (engine_select 머리말 근거)",
     )
     parser.add_argument(
         "--beat-source",
@@ -88,9 +93,19 @@ def main() -> int:
     # 4) 채보 — 엔진에 따라 뒷단 후처리 방식이 달라진다.
     #    crepe는 프레임당 피치가 하나라 배음 거짓 음을 만들지 않는다.
     t = time.monotonic()
-    monophonic = args.engine == "crepe"
-    engine_fn = transcribe_crepe.transcribe if monophonic else transcribe.transcribe
-    note_events = engine_fn(bass_stem, verbose=True)
+    if args.engine == "auto":
+        note_events, engine_used, engine_coverage = engine_select.transcribe_auto(
+            bass_stem, verbose=True
+        )
+    else:
+        engine_used = args.engine
+        engine_fn = (
+            transcribe_crepe.transcribe if args.engine == "crepe"
+            else transcribe.transcribe
+        )
+        note_events = engine_fn(bass_stem, verbose=True)
+        engine_coverage = engine_select.note_coverage(note_events, bass_stem)
+    monophonic = engine_used == "crepe"
     stages["transcribe"] = _done(t)
 
     # 5) 베이스 후처리
@@ -131,6 +146,36 @@ def main() -> int:
     # 채보를 건너뛰고 여기서부터 다시 돌 수 있다.
     bassclean.save_notes(cleaned, workdir / "notes.json")
 
+    # 5.3) 보컬 채보 + 가사 — 3단 악보의 위 단. 스템이 없으면(--skip-separate) 건너뛴다.
+    vocal_notes, vocal_syllables = None, None
+    if stems is not None and not args.no_vocal:
+        t = time.monotonic()
+        vocal_notes = transcribe_crepe.transcribe_vocal(stems["vocals"], verbose=True)
+        bassclean.save_notes(vocal_notes, workdir / "vocal_notes.json")
+        stages["vocal"] = _done(t)
+        print(f"[vocal] {len(vocal_notes)}음 -> vocal_notes.json")
+        t = time.monotonic()
+        try:
+            vocal_syllables = lyrics.transcribe_lyrics(stems["vocals"], verbose=True)
+            lyrics.save_lyrics(vocal_syllables, workdir / "lyrics.json")
+            stages["lyrics"] = _done(t)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[lyrics] 실패: {type(exc).__name__}: {exc} — 가사 없이 진행")
+            stages["lyrics"] = {"status": "failed", "ms": int((time.monotonic() - t) * 1000)}
+
+    # 5.5) 코드 심볼 + 조성 — 웹 경로(jobs.py)와 같은 공용 함수를 쓴다.
+    #      이 단계가 CLI에 빠져 있어서 CLI 산출물에만 코드가 없었다(2026-08-08).
+    t = time.monotonic()
+    try:
+        chord_names, key = chords.detect_and_save(
+            cleaned, grid, (stems or {}).get("other") or info.wav_path, workdir
+        )
+        stages["chords"] = _done(t)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[chords] 실패: {type(exc).__name__}: {exc} — 코드 없이 진행")
+        chord_names, key = None, None
+        stages["chords"] = {"status": "failed", "ms": int((time.monotonic() - t) * 1000)}
+
     # 6) 악보 — 양자화 -> 운지 -> AlphaTex. 웹 경로(jobs.py)와 같은 함수를 쓴다.
     t = time.monotonic()
     built = compose.build(
@@ -138,6 +183,10 @@ def main() -> int:
         title=info.title,
         tuning=args.tuning,
         include_sync=not args.no_sync,
+        chords=chord_names,
+        key_signature=(key or {}).get("signatureName"),
+        vocal_notes=vocal_notes,
+        vocal_syllables=vocal_syllables,
         verbose=True,
     )
     qscore, fscore = built.qscore, built.fscore
@@ -184,7 +233,10 @@ def main() -> int:
         "instrument": "bass",
         # 어느 채보 엔진으로 만든 악보인지 남긴다. 엔진마다 거짓 음·누락
         # 성향이 달라서, 나중에 결과를 볼 때 이 값 없이는 해석이 안 된다.
-        "engine": args.engine,
+        "engine": engine_used,
+        "engineCoverage": round(engine_coverage, 3),
+        # 조성 — 웹 경로와 같은 필드. 조표 표기·코드 안전장치가 읽는다.
+        **({"key": key} if key else {}),
         # --skip-separate면 스템이 없어 플레이어를 못 쓴다. 키 자체를 빼서 표시한다.
         **({"stems": sorted(stems), "stemFormat": "opus"} if stems else {}),
         "tuning": {

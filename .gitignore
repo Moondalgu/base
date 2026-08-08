@@ -1,5 +1,7 @@
 # Python
 .venv/
+# 분리 모델 A/B용 격리 환경 (audio-separator — 본 venv와 torch 충돌 방지)
+.venv-sep/
 __pycache__/
 *.pyc
 *.egg-info/

@@ -169,12 +169,20 @@ def build(
     include_sync: bool = True,
     chords: list[str] | None = None,
     key_signature: str | None = None,
+    vocal: "QuantizedScoreLike | None" = None,
+    vocal_syllables: list[dict] | None = None,
 ) -> str:
     """FrettedScore를 AlphaTex 문자열로 만든다.
 
     chords는 마디 순서와 같은 길이의 코드 이름 목록이다. 빈 문자열이면 그
     마디에는 코드를 적지 않는다 — 확신 없는 코드를 적는 것은 틀린 정보를
     주는 것이다.
+
+    vocal은 베이스와 **같은 격자·위상으로 양자화된** QuantizedScore다
+    (compose가 force_subdivision·force_phase로 맞춰서 넘긴다). 있으면 참조
+    악보(드라우닝 3단)처럼 보컬 오선 트랙을 위에 얹는다. 코드 심볼은 베이스
+    트랙에 남긴다 — 보컬은 쉼표 마디가 많은데 쉼표에는 코드를 못 붙인다
+    (PRD 12.2 N6). 위치 폴리싱은 조판 단계(F7)에서 본다.
     """
     _duration_table(score.subdivision)  # 지원 여부를 먼저 확인한다
 
@@ -189,6 +197,9 @@ def build(
         lines.append(f"\\ks {key_signature}")
     lines.append(".")
     lines.append("")
+    if vocal is not None and any(b.notes for b in vocal.bars):
+        lines.extend(_render_vocal_track(score, vocal, syllables=vocal_syllables))
+        lines.append("")
     lines.append('\\track "Bass"')
     # \staff{tabs}만 쓰면 TAB만 렌더링되어 프론트엔드의 ScoreTab 설정(오선보+TAB)이
     # 무시된다. score를 같이 요청해야 위에 오선보, 아래에 TAB이 함께 나온다.
@@ -223,6 +234,88 @@ def build(
 
 def _escape(text: str) -> str:
     return text.replace('"', "'")
+
+
+# alphaTex 음이름. 프로브 실측(tools/probe_vocal_pitch.mjs): `c4` = MIDI 60,
+# 즉 옥타브 숫자 = midi // 12 − 1. 임시표는 샵으로 통일한다 — 조표가 플랫이어도
+# 모델에는 피치로 들어가므로 렌더러가 이명동음을 알아서 처리한다.
+_PITCH_LETTERS = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+
+
+def _vocal_pitch_name(midi: int) -> str:
+    return f"{_PITCH_LETTERS[midi % 12]}{midi // 12 - 1}"
+
+
+def _render_vocal_track(
+    score: FrettedScore, vocal, syllables: list[dict] | None = None
+) -> list[str]:
+    """보컬 오선 트랙 전체를 적는다. 마디 수는 베이스 트랙과 정확히 맞춘다.
+
+    베이스와 달리 타이·이월을 걸지 않는다. 마디를 넘거나 표기 단위로 못 적는
+    잔여는 잘라서 쉼표로 채운다 — A.10과 같은 거래로, 위치는 정확하고 길이만
+    짧게 적힌다. 보컬 멜로디는 음절 단위(8분·4분 중심)라 손실이 작다.
+
+    syllables(ASR 음절, 시각 포함)를 주면 `\\lyrics`를 함께 적는다. alphaTab이
+    음절을 음표 비트에만 순서대로 붙이므로(프로브 실측 — 쉼표는 소비하지 않음),
+    **여기서 방출한 음표 순서 그대로** 음절 토큰을 만들어야 한다. 그래서
+    정렬을 이 함수 밖에서 할 수 없다 — 겹침 스킵·마디 절단이 여기서 일어난다.
+    """
+    lines = ['\\track "Vocal"', "\\staff{score} \\clef treble",
+             f"\\ts {score.beats_per_bar} 4"]
+    vbars = {b.index: b for b in vocal.bars}
+    table = _duration_table(vocal.subdivision)
+    slots_per_bar = score.beats_per_bar * vocal.subdivision
+
+    texts: list[str] = []
+    note_times: list[float] = []
+    for bar in score.bars:
+        vb = vbars.get(bar.index)
+        if vb is None or not vb.notes:
+            texts.append(" ".join(_rests(0, slots_per_bar, table)))
+            continue
+        text, times = _render_vocal_bar(vb, table, slots_per_bar)
+        texts.append(text)
+        note_times.extend(times)
+
+    if syllables and note_times:
+        from .lyrics import align
+
+        tokens = [_escape(t) for t in align(note_times, syllables)]
+        lines.append(f'\\lyrics "{" ".join(tokens)}"')
+    lines.append("")
+    lines.append(" |\n".join(texts))
+    return lines
+
+
+def _render_vocal_bar(bar, table, slots_per_bar: int) -> tuple[str, list[float]]:
+    """보컬 마디 하나 — (피치 토큰 열, 방출한 음표의 절대 시각 목록).
+
+    단선율 강제(겹침은 확신도 순). 시각은 가사 정렬이 쓴다.
+    """
+    tokens: list[str] = []
+    times: list[float] = []
+    bar_len = bar.end_sec - bar.start_sec
+    pos = 0
+    for n in sorted(bar.notes, key=lambda n: (n.slot, -n.amplitude)):
+        if n.slot < pos:
+            continue  # 앞 음과 겹침 — 단선율이므로 건너뛴다
+        if n.slot > pos:
+            tokens.extend(_rests(pos, n.slot - pos, table))
+            pos = n.slot
+        span = min(n.duration_slots, slots_per_bar - pos)
+        if span <= 0:
+            continue
+        size, duration = _largest_fitting(span, pos, table)
+        tokens.append(f"{_vocal_pitch_name(n.pitch)}.{duration}")
+        times.append(bar.start_sec + bar_len * (pos / slots_per_bar))
+        pos += size
+        if span > size:
+            # 남은 길이는 쉼표로 — 타이 문법(A.10)이 절반만 통과하므로 걸지 않는다
+            tokens.extend(_rests(pos, span - size, table))
+            pos += span - size
+    if pos < slots_per_bar:
+        tokens.extend(_rests(pos, slots_per_bar - pos, table))
+    return " ".join(tokens), times
 
 
 def _tuning_names(tuning: list[int]) -> str:

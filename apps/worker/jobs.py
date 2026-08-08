@@ -21,17 +21,13 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from pipeline import (
-    bassclean, beats, compose, diagnose, encode, fretting, quality, reduce,
-    separate, transcribe, transcribe_crepe,
+    bassclean, beats, compose, diagnose, encode, engine_select, fretting,
+    quality, reduce, separate,
 )
 from pipeline.ingest import ingest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DATA = ROOT / "data"
-
-# 웹 경로의 채보 엔진. crepe는 프레임당 피치가 하나라 배음 거짓 음을
-# 만들지 않는다(정답 데이터셋 거짓 음 22.8% -> 10.5%).
-DEFAULT_ENGINE = "crepe"
 
 STAGES = [
     ("ingest", "오디오 준비"),
@@ -40,6 +36,7 @@ STAGES = [
     ("beats", "박자 분석"),
     ("transcribe", "음 검출"),
     ("bassclean", "베이스 정리"),
+    ("vocal", "보컬 채보"),
     ("chords", "코드 분석"),
     # 양자화·운지·표기는 한 단계로 묶는다. 셋잇단을 적을 수 없을 때 격자를
     # 되돌려 세 단계를 다시 도는 폴백이 있어서 경계가 원래 없고, 세 단계를
@@ -103,28 +100,37 @@ def _detect_chords(
     다시 읽게 된다.
     """
     from pipeline import chords as chords_mod
-    from pipeline import quantize as quantize_mod
-    from pipeline import reduce as reduce_mod
 
     try:
-        qscore = quantize_mod.quantize(cleaned, grid)
-        bars = [
-            (b.index, b.start_sec, b.end_sec, reduce_mod.bar_root(b))
-            for b in qscore.bars
-        ]
-        detected = chords_mod.detect(audio_path, bars)
-        # 코드 진행이 나오면 조성은 계산으로 떨어진다. 오디오를 다시 안 본다.
-        key = chords_mod.detect_key(detected)
+        # 실제 판정·저장은 공용 함수가 한다 — CLI·재생성 도구와 같은 경로.
+        return chords_mod.detect_and_save(cleaned, grid, audio_path, workdir)
     except Exception as exc:  # noqa: BLE001
         # 코드가 없어도 악보는 나온다. 여기서 잡을 멈추지 않는다.
         print(f"[chords] 실패: {type(exc).__name__}: {exc}")
         return None, None
 
-    (workdir / "chords.json").write_text(
-        json.dumps([c.to_dict() for c in detected], ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return [c.name for c in detected], (key.to_dict() if key else None)
+
+def transcribe_vocal_stage(stem_path: Path, workdir: Path) -> tuple:
+    """보컬 채보 + 가사 ASR + 저장. 실패해도 잡을 멈추지 않는다.
+
+    반환 (vocal_notes | None, syllables | None). 가사만 실패하면 3단은 유지된다.
+    """
+    from pipeline import lyrics as lyrics_mod
+    from pipeline import transcribe_crepe
+
+    try:
+        notes = transcribe_crepe.transcribe_vocal(stem_path)
+        bassclean.save_notes(notes, workdir / "vocal_notes.json")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[vocal] 실패: {type(exc).__name__}: {exc} — 2단 악보로 진행")
+        return None, None
+    try:
+        syllables = lyrics_mod.transcribe_lyrics(stem_path)
+        lyrics_mod.save_lyrics(syllables, workdir / "lyrics.json")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[lyrics] 실패: {type(exc).__name__}: {exc} — 가사 없이 진행")
+        return notes, None
+    return notes, syllables
 
 
 class MissingOriginals(FileNotFoundError):
@@ -165,6 +171,17 @@ def build_score_variant(
     chord_names = _load_chords(workdir / "chords.json", transpose)
     key_signature = _load_key_signature(workdir, transpose)
 
+    # 보컬 채보가 있으면 3단 악보가 된다 (드라우닝 참조 악보 형태).
+    # 없으면 기존 2단 그대로 — 구버전 산출물 호환. 가사(ASR 음절)도 마찬가지다.
+    vocal_path = workdir / "vocal_notes.json"
+    vocal_notes = bassclean.load_notes(vocal_path) if vocal_path.exists() else None
+    lyrics_path = workdir / "lyrics.json"
+    vocal_syllables = None
+    if vocal_notes and lyrics_path.exists():
+        from pipeline import lyrics as lyrics_mod
+
+        vocal_syllables = lyrics_mod.load_lyrics(lyrics_path)
+
     return compose.build(
         bassclean.load_notes(notes_path),
         beats.BeatGrid.from_json(beats_path),
@@ -174,6 +191,8 @@ def build_score_variant(
         transpose=transpose,
         chords=chord_names,
         key_signature=key_signature,
+        vocal_notes=vocal_notes,
+        vocal_syllables=vocal_syllables,
     )
 
 
@@ -312,11 +331,14 @@ async def _run(job: Job) -> None:
             "beats", beats.track_beats, info.wav_path, workdir,
             phase_source=stems.get("bass"),
         )
+        # 엔진 자동 선택 — CREPE가 스템을 설명하지 못하면(뮤트 중심 저역 펑크
+        # 실측 붕괴 사례) basic-pitch로 폴백한다. 근거는 engine_select 머리말.
+        note_events, engine_used, engine_coverage = await run_stage(
+            "transcribe", engine_select.transcribe_auto, stems["bass"]
+        )
         # 엔진에 따라 뒷단 후처리가 갈린다. crepe 출력에는 배음 거짓 음도
         # 조각도 없어서 배음 제거·단선율 강제·병합이 실제 음만 깎는다.
-        monophonic = DEFAULT_ENGINE == "crepe"
-        engine_fn = transcribe_crepe.transcribe if monophonic else transcribe.transcribe
-        note_events = await run_stage("transcribe", engine_fn, stems["bass"])
+        monophonic = engine_used == "crepe"
 
         cleaned, clean_report = await run_stage(
             "bassclean",
@@ -332,7 +354,11 @@ async def _run(job: Job) -> None:
         # 정답으로 채점할 수 있어야 하는데, 후처리 결과만 저장하면 그 비교가
         # 영원히 불가능해진다(실제로 막혔다).
         bassclean.save_notes(cleaned, workdir / "notes_raw.json")
-        cleaned, gate_report = bassclean.gate_by_loudness(cleaned, grid.beats)
+        # beats_per_bar를 넘긴다 — 기본값 4로 두면 4/4가 아닌 곡에서 게이트의
+        # 마디 경계가 어긋난다 (CLI 경로와 같은 호출로 유지).
+        cleaned, gate_report = bassclean.gate_by_loudness(
+            cleaned, grid.beats, beats_per_bar=grid.beats_per_bar
+        )
 
         # 입력이 연습 영상(베이스 둘)인지 판정한다. 게이트를 **건 뒤**의 정렬로
         # 봐야 한다 — 게이트 전 값으로 보면 게이트가 해결한 곡까지 몰린다.
@@ -348,6 +374,13 @@ async def _run(job: Job) -> None:
         # 채보(약 480초)를 건너뛰고 여기서부터 다시 돌 수 있다.
         bassclean.save_notes(cleaned, workdir / "notes.json")
 
+        # 보컬 채보 + 가사 — 3단 악보의 위 단. 보컬 스템이 없으면 2단으로 남는다.
+        vocal_notes, vocal_syllables = None, None
+        if stems.get("vocals"):
+            vocal_notes, vocal_syllables = await run_stage(
+                "vocal", transcribe_vocal_stage, stems["vocals"], workdir
+            )
+
         # 코드 심볼 — 화성 악기가 든 other 스템의 크로마를 본다. 베이스 스템에는
         # 근음만 있어 3도가 없다. 마디 근음은 베이스 채보에서 이미 나오므로
         # 남는 판단은 장/단뿐이다.
@@ -360,6 +393,8 @@ async def _run(job: Job) -> None:
             "score", compose.build, cleaned, grid,
             title=info.title, tuning=job.tuning, chords=chord_names,
             key_signature=(key or {}).get("signatureName"),
+            vocal_notes=vocal_notes,
+            vocal_syllables=vocal_syllables,
         )
         qscore, fscore = built.qscore, built.fscore
         # 원곡이 이미 초급 수준인지 본다. 쉬운 곡에는 단계를 만들지 않는다.
@@ -386,7 +421,10 @@ async def _run(job: Job) -> None:
             "instrument": "bass",
             # 어느 채보 엔진으로 만든 악보인지 남긴다. 엔진마다 거짓 음·누락
             # 성향이 달라서, 나중에 결과를 볼 때 이 값 없이는 해석이 안 된다.
-            "engine": DEFAULT_ENGINE,
+            "engine": engine_used,
+            # 폴백 판정에 쓴 커버리지(노트 총 길이/스템 활동 길이). 이 값이
+            # 낮은데 crepe로 남아 있으면 basic-pitch도 실패했다는 뜻이다.
+            "engineCoverage": round(engine_coverage, 3),
             "tuning": {
                 "preset": fscore.tuning_name,
                 "midi": fscore.tuning,
