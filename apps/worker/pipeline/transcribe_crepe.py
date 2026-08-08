@@ -147,7 +147,15 @@ def transcribe_vocal(stem_path: Path, *, verbose: bool = False) -> list:
     ]
 
 
-def merge_vocal_fragments(notes: list, max_gap: float = 0.08) -> list:
+# 음절 온셋 병합 가드(초). ASR 음절 시작과 보컬 검출 온셋의 실측 오차가
+# 0.00~0.17초(드라우닝 사·랑·했·던·떠) — 그보다 넉넉하게 잡는다.
+SYLLABLE_GUARD_SEC = 0.2
+
+
+def merge_vocal_fragments(
+    notes: list, max_gap: float = 0.08,
+    syllable_onsets: "list[float] | None" = None,
+) -> list:
     """같은 피치의 인접 보컬 조각을 병합한다.
 
     CREPE 분절은 반음 반올림 경계에서 음을 쪼갠다 — 비브라토가 있는 지속음이
@@ -157,17 +165,31 @@ def merge_vocal_fragments(notes: list, max_gap: float = 0.08) -> list:
     **같은 피치만** 병합한다. 다른 피치끼리 붙이면 실제 꾸밈음·경과음을
     먹는다. 간격 기준 80ms는 CREPE 프레임(10ms)의 흔들림과 무성 자음을
     덮는 수준이고, 같은 음절 안의 끊김이 이보다 길기는 어렵다.
+
+    **음절 경계는 병합하지 않는다**(syllable_onsets). 같은 피치로 이어
+    부르는 두 음절("…록 사…"이 같은 음높이)을 붙이면 음 하나가 사라져
+    가사가 통째로 한 칸씩 밀린다 — 실측: 드라우닝 "사"·"떠"가 먹혀
+    "랑했던지"로 밀렸다. 조각 시작이 어느 음절 시작과 SYLLABLE_GUARD_SEC
+    안이면 그 조각은 새 음절의 머리이므로 따로 남긴다.
     """
     import copy
 
     if not notes:
         return notes
+    onsets = sorted(syllable_onsets) if syllable_onsets else []
+
+    def is_syllable_head(t: float) -> bool:
+        # 이진 탐색까지 필요 없는 크기(수백)지만 시각순이라 포인터도 가능.
+        # 명료함을 위해 그냥 선형 — 곡당 한 번이다.
+        return any(abs(t - s) <= SYLLABLE_GUARD_SEC for s in onsets)
+
     # 입력을 변조하지 않는다 — 호출자(jobs·CLI)가 같은 리스트를 다른 용도로
     # 다시 쓸 수 있고, 표기 폴백(build_from 재호출)에서 두 번 지나간다.
     merged = [copy.copy(notes[0])]
     for n in notes[1:]:
         prev = merged[-1]
-        if n.pitch == prev.pitch and n.start - prev.end <= max_gap:
+        if (n.pitch == prev.pitch and n.start - prev.end <= max_gap
+                and not is_syllable_head(n.start)):
             prev.end = n.end
             prev.detected_end = n.detected_end
             # 확신도는 큰 쪽을 대표값으로 — 평균을 다시 내려면 길이 가중이

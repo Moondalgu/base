@@ -112,7 +112,10 @@ def build(
             from . import transcribe_crepe as _tc
 
             vworking = _tc.merge_vocal_fragments(
-                _transpose_vocal(_drop_vocal_ghosts(vocal_notes), transpose)
+                _transpose_vocal(_drop_vocal_ghosts(vocal_notes), transpose),
+                # 음절 경계를 병합에서 지킨다 — 같은 피치로 이어지는 두 음절을
+                # 붙이면 가사가 한 칸씩 밀린다(transcribe_crepe 머리말 실측).
+                syllable_onsets=[s["start"] for s in (vocal_syllables or [])],
             )
             vocal_q = quantize.quantize(
                 vworking, grid,

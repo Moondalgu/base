@@ -33,6 +33,12 @@ MODEL_SIZE = "small"
 # 수준이면 이웃 음과 헷갈리지 않는 선이다.
 ALIGN_TOLERANCE_SEC = 0.45
 
+# 최근접 점프 문턱(초) — 다음 음절이 현재 음절보다 **이만큼 이상** 더
+# 가까울 때만 현재 음절을 버린다. 실측(드라우닝): 격자 스냅+ASR 오차로
+# 생기는 정상 편차는 0.20 이하(9마디 "도"), 음을 잃은 음절이 남의 음에
+# 걸릴 때의 편차 차이는 0.40 이상(15마디 "저"vs"떠") — 사이 0.25.
+LOOKAHEAD_MARGIN_SEC = 0.25
+
 
 def transcribe_lyrics(vocals_path: Path, *, verbose: bool = False) -> list[dict]:
     """보컬 스템에서 음절 목록을 뽑는다. [{"start","end","text"}...] (시각순)."""
@@ -79,11 +85,24 @@ def align(note_times: list[float], syllables: list[dict]) -> list[str]:
 
     두 열 모두 시각순이므로 포인터 하나로 전진한다. 음보다 한참 앞의 음절은
     버리고(검출 누락), 허용 오차 안이면 붙이고, 아니면 `-`.
+
+    **최근접 우선**: 현재 음절보다 다음 음절이 이 음에 더 가까우면 현재
+    음절을 버리고 다음을 붙인다. 음을 잃은 음절(검출 누락)이 오차 경계에
+    걸려 뒤 음을 훔치면, 그 음의 진짜 주인부터 줄줄이 밀린다 — 실측:
+    드라우닝 15마디 "저"(0.43s 차)가 "떠"(0.03s 차)의 음을 가져가
+    "저나고"가 됐다.
     """
     out: list[str] = []
     si = 0
     for t in note_times:
         while si < len(syllables) and syllables[si]["start"] < t - ALIGN_TOLERANCE_SEC:
+            si += 1
+        # 다음 음절이 이 음에 **문턱 이상** 더 가까우면 현재 음절은 음을
+        # 잃은 것 — 버린다. 문턱 없이 단순 비교하면 격자 스냅 편차만으로
+        # 정상 음절을 건너뛴다(LOOKAHEAD_MARGIN_SEC 주석 실측).
+        while (si + 1 < len(syllables)
+               and abs(syllables[si]["start"] - t)
+               - abs(syllables[si + 1]["start"] - t) >= LOOKAHEAD_MARGIN_SEC):
             si += 1
         if si < len(syllables) and abs(syllables[si]["start"] - t) <= ALIGN_TOLERANCE_SEC:
             out.append(syllables[si]["text"])
