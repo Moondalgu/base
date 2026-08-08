@@ -147,6 +147,44 @@ async def score_variant(
     )
 
 
+@app.get("/api/scores/{content_hash}/ledger.csv")
+async def score_ledger(
+    content_hash: str,
+    level: int = compose.ORIGINAL_LEVEL,
+    transpose: int = 0,
+    tuning: str | None = None,
+) -> Response:
+    """음표 배치 원장 — 화면 악보와 같은 변형의 모든 음을 CSV로.
+
+    각 음이 어느 마디·슬롯·박에, 어떤 검출 시각에서 스냅되어, 어떤 피치
+    출처(검출/템플릿)와 운지로 들어갔는지 전부 담는다. `/api/scores`와 같은
+    인자·같은 `compose.build()`를 탄다 — 화면과 다른 원장을 주면 거짓말이 된다.
+    """
+    from pipeline import ledger as ledger_mod
+
+    try:
+        built = await asyncio.to_thread(
+            jobs.build_score_variant,
+            content_hash, level=level, transpose=transpose, tuning=tuning,
+        )
+    except jobs.MissingOriginals as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except compose.UnsupportedLevel as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=ledger_mod.to_csv(built.ledger or []),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="{content_hash}_lv{built.level}_ledger.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.get("/api/exports/{content_hash}.{fmt}")
 async def score_export(
     content_hash: str,

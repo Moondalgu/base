@@ -21,7 +21,8 @@ sys.path.insert(0, str(ROOT / "apps" / "worker"))
 
 from pipeline import (  # noqa: E402
     bassclean, beats, chords, compose, diagnose, encode, engine_select,
-    fretting, lyrics, quality, reduce, separate, transcribe, transcribe_crepe,
+    fretting, ledger, lyrics, quality, reduce, separate, transcribe,
+    transcribe_crepe,
 )
 from pipeline.ingest import ingest  # noqa: E402
 
@@ -157,6 +158,10 @@ def main() -> int:
         t = time.monotonic()
         try:
             vocal_syllables = lyrics.transcribe_lyrics(stems["vocals"], verbose=True)
+            # 오인식 교정. 실패·키 없음이면 원본 그대로 온다.
+            vocal_syllables = lyrics.refine_with_gemini(
+                vocal_syllables, info.title, verbose=True
+            )
             lyrics.save_lyrics(vocal_syllables, workdir / "lyrics.json")
             stages["lyrics"] = _done(t)
         except Exception as exc:  # noqa: BLE001
@@ -187,6 +192,7 @@ def main() -> int:
         key_signature=(key or {}).get("signatureName"),
         vocal_notes=vocal_notes,
         vocal_syllables=vocal_syllables,
+        chord_tones=chords.load_tones(workdir / "chords.json"),
         verbose=True,
     )
     qscore, fscore = built.qscore, built.fscore
@@ -194,6 +200,8 @@ def main() -> int:
         print("[score] 셋잇단을 적을 수 없어 subdivision 4로 재양자화했습니다.")
     tex_path = workdir / "score.alphatex"
     tex_path.write_text(built.tex, encoding="utf-8")
+    # 음표 배치 원장 — 모든 음의 [검출 시각→슬롯→박 위치→운지] 데이터.
+    ledger.write(built.ledger or [], workdir / "ledger.csv")
     stages["score"] = _done(t)
 
     # 품질 게이트

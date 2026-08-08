@@ -110,8 +110,8 @@ def _detect_chords(
         return None, None
 
 
-def transcribe_vocal_stage(stem_path: Path, workdir: Path) -> tuple:
-    """보컬 채보 + 가사 ASR + 저장. 실패해도 잡을 멈추지 않는다.
+def transcribe_vocal_stage(stem_path: Path, workdir: Path, title: str = "") -> tuple:
+    """보컬 채보 + 가사 ASR(+Gemini 교정) + 저장. 실패해도 잡을 멈추지 않는다.
 
     반환 (vocal_notes | None, syllables | None). 가사만 실패하면 3단은 유지된다.
     """
@@ -126,6 +126,9 @@ def transcribe_vocal_stage(stem_path: Path, workdir: Path) -> tuple:
         return None, None
     try:
         syllables = lyrics_mod.transcribe_lyrics(stem_path)
+        if title:
+            # 오인식 교정. 실패·키 없음이면 원본 그대로 온다.
+            syllables = lyrics_mod.refine_with_gemini(syllables, title)
         lyrics_mod.save_lyrics(syllables, workdir / "lyrics.json")
     except Exception as exc:  # noqa: BLE001
         print(f"[lyrics] 실패: {type(exc).__name__}: {exc} — 가사 없이 진행")
@@ -170,6 +173,11 @@ def build_score_variant(
     # 서로 어긋난다. 조표도 마찬가지다.
     chord_names = _load_chords(workdir / "chords.json", transpose)
     key_signature = _load_key_signature(workdir, transpose)
+    # 화성 가드용 코드 근음. 이조와 무관하다 — 가드는 이조 **전** 검출 피치에
+    # 걸리고, 이조는 그 뒤에 같은 값으로 적용된다.
+    from pipeline import chords as chords_mod
+
+    chord_tones = chords_mod.load_tones(workdir / "chords.json")
 
     # 보컬 채보가 있으면 3단 악보가 된다 (드라우닝 참조 악보 형태).
     # 없으면 기존 2단 그대로 — 구버전 산출물 호환. 가사(ASR 음절)도 마찬가지다.
@@ -193,6 +201,7 @@ def build_score_variant(
         key_signature=key_signature,
         vocal_notes=vocal_notes,
         vocal_syllables=vocal_syllables,
+        chord_tones=chord_tones,
     )
 
 
@@ -378,7 +387,7 @@ async def _run(job: Job) -> None:
         vocal_notes, vocal_syllables = None, None
         if stems.get("vocals"):
             vocal_notes, vocal_syllables = await run_stage(
-                "vocal", transcribe_vocal_stage, stems["vocals"], workdir
+                "vocal", transcribe_vocal_stage, stems["vocals"], workdir, info.title
             )
 
         # 코드 심볼 — 화성 악기가 든 other 스템의 크로마를 본다. 베이스 스템에는
@@ -389,12 +398,15 @@ async def _run(job: Job) -> None:
             stems.get("other") or info.wav_path, workdir,
         )
 
+        from pipeline import chords as chords_mod
+
         built = await run_stage(
             "score", compose.build, cleaned, grid,
             title=info.title, tuning=job.tuning, chords=chord_names,
             key_signature=(key or {}).get("signatureName"),
             vocal_notes=vocal_notes,
             vocal_syllables=vocal_syllables,
+            chord_tones=chords_mod.load_tones(workdir / "chords.json"),
         )
         qscore, fscore = built.qscore, built.fscore
         # 원곡이 이미 초급 수준인지 본다. 쉬운 곡에는 단계를 만들지 않는다.

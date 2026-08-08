@@ -493,3 +493,47 @@ def detect_and_save(cleaned, grid, audio_path: Path, workdir: Path):
         encoding="utf-8",
     )
     return [c.name for c in detected], (key.to_dict() if key else None)
+
+
+def load_roots(path: Path) -> dict[int, int] | None:
+    """chords.json에서 {마디 index: 근음 피치클래스}를 읽는다. 없으면 None.
+
+    하향판 화성 가드(reduce.reduce_score)가 쓴다 — 베이스 검출 근음이 코드
+    근음과 반음 이웃이면 코드 쪽으로 스냅하는 독립 증거.
+    """
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        c["bar"]: c["rootPitchClass"]
+        for c in data
+        if c.get("rootPitchClass") is not None
+    }
+
+
+def load_tones(path: Path) -> dict[int, frozenset[int]] | None:
+    """chords.json에서 {마디 index: 코드 구성음 피치클래스 집합}을 읽는다.
+
+    하향판 화성 가드가 쓴다 — 단일 화성 마디의 근음은 코드 구성음이어야
+    한다는 규칙의 기준. 품질을 모르는 마디는 근음 하나만 담는다.
+    """
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    qualities = harmony()["chordQualities"]
+    out: dict[int, frozenset[int]] = {}
+    for c in data:
+        root = c.get("rootPitchClass")
+        if root is None:
+            continue
+        quality = c.get("quality")
+        if quality in qualities:
+            tones = {(root + t) % 12 for t in qualities[quality]["tones"]}
+        else:
+            # 품질 미상이면 구성음을 모른다 — 근음 하나로 좁히면 가드가
+            # 반음 오차 교정(B→C)을 못 하고 마디 끝 픽업을 근음으로
+            # 승격시킨다(실측). 장·단 3화음의 합집합으로 둔다.
+            tones = {root, (root + MINOR_THIRD) % 12,
+                     (root + MAJOR_THIRD) % 12, (root + PERFECT_FIFTH) % 12}
+        out[c["bar"]] = frozenset(tones)
+    return out

@@ -42,6 +42,27 @@
 
 화성 분석 없이도 근음 대비 반음 거리로 도수를 안다(유니슨·옥타브 0, 3도 3~4,
 5도 7, 7도 10~11). 그래서 화성 어휘를 깎는 것이 코드 인식 없이 구현된다.
+
+## 참조 악보(사람 편곡) 문법 — 초급판 판단 기준 (2026-08-08 확정)
+
+akbobada 초급 편곡판(드라우닝·예뻤어)을 마디 단위로 대조해 도출한 규칙.
+"사람이 초보가 잘 칠 수 있게 바꾼 방식"이 하향 엔진의 정답 기준이다.
+
+1. **곡 지배 밀도로 페달한다.** 마디별 검출 밀도를 따르지 않는다 — 검출이
+   덜 잡힌 마디만 4분음표로 꺼지면 같은 그루브가 다른 리듬으로 적힌다.
+2. **근음은 코드 체인지 단위(반마디)로 바뀐다.** 단 뒤 절반은 증거가
+   충분할 때만(HALF_ROOT_MIN_*) — 마디 끝 픽업이 화성을 조기 전환시키면 안 된다.
+3. **화성 가드: 근음은 코드 구성음이어야 한다.** 검출 반음 오차(B→C)는
+   반음 이웃 교정 먼저, 재투표는 그 다음(픽업 승격 방지). 반마디 화성
+   마디는 건드리지 않는다.
+4. **같은 근음은 곡 안에서 같은 저옥타브.** 옥타브 튄 검출은 pc_floor로 내린다.
+5. **성긴 마디(픽업·인트로 꼬리)는 검출 위치를 보존한다.** 슬롯 0부터
+   깔면 마디 끝 픽업이 온음표로 둔갑한다. 참조는 쉼표+픽업으로 적는다.
+6. **근음은 굵은 현(E·A)으로** — fretting.W_THIN_STRING이 담당.
+7. 슬래시 코드(D♭m/E)는 베이스 음이 근음이다 — 검출이 이미 그렇게 낸다.
+
+측정: 드라우닝 초급 근음 = 사람 채보(Songsterr) 95%. 어긋난 잔여는 아웃트로
+필인 구간과 반마디 화성 해석 차이(참조 코드와는 일치 확인).
 """
 
 from __future__ import annotations
@@ -262,6 +283,8 @@ class ReduceReport:
     anchors_kept: int = 0
     # 5도·옥타브로 살린 음 수 (근음만 남기지 않은 덕에 풍성해진 만큼)
     colour_notes: int = 0
+    # 화성 가드가 코드 근음으로 스냅한 마디 수 (검출 근음이 반음 이웃이던 곳)
+    harmony_snapped: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -294,9 +317,18 @@ def profile_of(level: int) -> LevelProfile:
 
 
 def reduce_score(
-    score: QuantizedScore, level: int, *, verbose: bool = False
+    score: QuantizedScore, level: int, *, verbose: bool = False,
+    chord_tones: dict[int, frozenset[int]] | None = None,
 ) -> tuple[QuantizedScore, ReduceReport]:
-    """난이도를 낮춘 악보를 만든다. 원본은 건드리지 않는다."""
+    """난이도를 낮춘 악보를 만든다. 원본은 건드리지 않는다.
+
+    chord_tones는 {마디 index: 코드 구성음 피치클래스 집합} — 오디오 화성 분석
+    (chords.py, other 스템 크로마)에서 온 독립 증거다. 하향판의 **화성
+    가드**로 쓴다: 마디가 단일 화성인데 베이스 근음이 코드 근음과 반음
+    이웃이면 코드 쪽으로 스냅한다. 실측(드라우닝): Cm 마디 5곳에서 검출이
+    B(반음 아래)를 근음으로 골라 화음이 깨졌다 — 코드 검출은 C를 냈다.
+    반음 차이만 스냅한다(그 이상이면 코드 쪽이 틀렸을 수도 있다).
+    """
     prof = profile_of(level)
     report = ReduceReport(level=level, level_name=prof.name, bars=len(score.bars))
     report.notes_before = sum(len(b.notes) for b in score.bars)
@@ -337,10 +369,49 @@ def reduce_score(
         root = bar_root(bar)
 
         if prof.uniform_rhythm:
-            if root is not None:
-                root = pc_floor.get(root % 12, root)
+            # 근음은 반마디 단위로 본다 — 코드가 반마디로 바뀌는 곡(예뻤어
+            # Am7♭5→A♭dim7)에서 마디당 근음 하나로 페달하면 뒤 코드가
+            # 사라진다. 참조 악보 초급판이 실제로 반마디에 근음을 바꾼다.
+            front, back = half_bar_roots(bar)
+            # 화성 가드 — 단일 화성 마디(front==back pc)에서만. 반마디 화성
+            # 마디는 마디 단위 코드로 재단할 수 없다(뒤 절반을 되돌려버린다).
+            #
+            # 규칙: **근음은 코드 구성음이어야 한다.** 실측(드라우닝 Fm 마디
+            # 3곳): 검출이 {C, B, B, F}일 때 투표로 B(비구성음·반음 오차)가
+            # 이겨 화음이 깨졌다. ①마디 안 코드 구성음 중 가중 최대로 교체,
+            # ②구성음이 마디에 없으면 반음 이웃일 때만 스냅.
+            if (chord_tones is not None and front is not None
+                    and back is not None and front % 12 == back % 12):
+                tones = chord_tones.get(bar.index)
+                if tones and front % 12 not in tones:
+                    # ① 반음 이웃 교정을 먼저 — 비구성음 근음의 가장 흔한
+                    # 정체는 검출 반음 오차다(B는 C의 오검출). 재투표를 먼저
+                    # 하면 마디 끝 픽업(다음 코드 선행음)이 근음으로 승격되는
+                    # 오답이 나온다(실측: C 마디의 F 픽업이 이겼다).
+                    want = min(
+                        tones,
+                        key=lambda pc: min((front - pc) % 12, (pc - front) % 12),
+                    )
+                    delta = (want - front) % 12
+                    if delta > 6:
+                        delta -= 12          # 최근접 방향 (반음 위/아래)
+                    if abs(delta) == 1:
+                        front += delta       # pc만 교정, 옥타브는 최근접 유지
+                        back = front
+                        report.harmony_snapped += 1
+                    else:
+                        # ② 반음 이웃이 없으면 마디 안 구성음 중 가중 최대
+                        cand = _root_among(bar, tones)
+                        if cand is not None:
+                            front = back = cand
+                            report.harmony_snapped += 1
+            if front is not None:
+                front = pc_floor.get(front % 12, front)
+            if back is not None:
+                back = pc_floor.get(back % 12, back)
             new_bar, stats = _templated_bar(
-                bar, prof, target_sub, root, count_hint=modal_count
+                bar, prof, target_sub, front,
+                count_hint=modal_count, back_root=back,
             )
             if stats["templated"]:
                 report.templated_bars += 1
@@ -372,6 +443,52 @@ def reduce_score(
             f"비화성음 대체 {report.replaced_nonharmonic}"
         )
     return reduced, report
+
+
+# 뒤 절반을 다른 근음으로 인정하기 위한 최소 증거. 마디 끝 픽업 한두 타
+# (다음 코드를 미리 치는 관습)가 뒤 절반을 지배해버리면 화성이 반마디
+# 일찍 바뀐다 — 실측: 이 기준 없이 예뻤어 근음 일치가 77%→54%로 무너졌다.
+HALF_ROOT_MIN_NOTES = 2
+HALF_ROOT_MIN_SLOTS_RATIO = 0.5   # 뒤 절반 길이의 절반 이상을 그 음이 채워야 한다
+
+
+def half_bar_roots(bar: Bar) -> tuple[int | None, int | None]:
+    """마디 앞/뒤 절반의 근음. 코드가 반마디로 바뀌는 곡(예뻤어 Am7♭5→A♭dim7)의
+    참조 악보 문법이다 — 초급 페달이 마디당 근음 하나면 뒤 코드가 사라진다.
+
+    단 뒤 절반은 **증거가 충분할 때만** 다른 근음으로 인정한다. 마디 끝
+    픽업(다음 코드 선행)은 음 한두 개라 여기서 걸러진다. 증거가 부족하면
+    앞 근음으로 페달을 잇는다.
+    """
+    half = bar.slots_per_bar // 2
+    front_notes = [n for n in bar.notes if n.slot < half]
+    back_notes = [n for n in bar.notes if n.slot >= half]
+    fr = bar_root(replace(bar, notes=front_notes))
+    br = bar_root(replace(bar, notes=back_notes))
+    if fr is None:
+        return br, br
+    if br is None or br % 12 == fr % 12:
+        return fr, fr
+
+    # 뒤 절반 근음 피치클래스의 실제 점유를 본다
+    root_notes = [n for n in back_notes if n.pitch % 12 == br % 12]
+    covered = sum(min(n.duration_slots, bar.slots_per_bar - n.slot) for n in root_notes)
+    if (len(root_notes) >= HALF_ROOT_MIN_NOTES
+            and covered >= (bar.slots_per_bar - half) * HALF_ROOT_MIN_SLOTS_RATIO):
+        return fr, br
+    return fr, fr
+
+
+def _root_among(bar: Bar, allowed_pcs: frozenset[int]) -> int | None:
+    """허용 피치클래스(코드 구성음) 안에서 bar_root와 같은 가중 투표.
+
+    화성 가드가 쓴다 — 비구성음이 투표에서 이겼을 때, 구성음들만 놓고
+    다시 뽑는다. 마디에 구성음이 하나도 없으면 None.
+    """
+    filtered = [n for n in bar.notes if n.pitch % 12 in allowed_pcs]
+    if not filtered:
+        return None
+    return bar_root(replace(bar, notes=filtered))
 
 
 def bar_root(bar: Bar) -> int | None:
@@ -466,6 +583,7 @@ def _colour_pitch(
 def _templated_bar(
     bar: Bar, prof: LevelProfile, subdivision: int, root: int | None,
     count_hint: int = 0,
+    back_root: int | None = None,
 ) -> tuple[Bar, dict]:
     """마디를 균일 리듬으로 다시 적고 앵커를 얹는다.
 
@@ -484,10 +602,35 @@ def _templated_bar(
         return empty, stats
 
     count = _template_count(len(bar.notes), min(prof.max_notes_per_bar, slots_per_bar))
-    if count_hint and len(bar.notes) * 2 >= count_hint:
+    pedal = bool(count_hint) and len(bar.notes) * 2 >= count_hint
+    if pedal:
         count = min(count_hint, slots_per_bar)
     if count <= 0:
         return empty, stats
+
+    half = slots_per_bar // 2
+
+    def root_at(slot: int) -> int:
+        if back_root is not None and slot >= half:
+            return back_root
+        return root
+
+    if count_hint and not pedal:
+        # 성긴 마디(픽업·인트로 꼬리) — 참조 악보 문법: 검출된 **자리에서만**
+        # 소리 낸다. 슬롯 0부터 균일하게 깔면 마디 끝 픽업 한 타가 온음표로
+        # 둔갑한다(드라우닝 8마디 실측 — 참조는 쉼표 뒤 픽업이다).
+        step = max(1, slots_per_bar // max(1, count_hint))
+        seen: dict[int, QuantizedNote] = {}
+        for n in sorted(bar.notes, key=lambda x: -x.amplitude):
+            slot = min(slots_per_bar - step, round(n.slot / step) * step)
+            if slot in seen:
+                continue
+            seen[slot] = replace(
+                n, slot=slot, pitch=root_at(slot),
+                duration_slots=min(n.duration_slots, step),
+            )
+        stats["templated"] = True
+        return replace(empty, notes=sorted(seen.values(), key=lambda x: x.slot)), stats
 
     step = slots_per_bar // count
     amplitude = max(n.amplitude for n in bar.notes)
@@ -496,7 +639,7 @@ def _templated_bar(
     notes: list[QuantizedNote] = []
     for i in range(count):
         slot = i * step
-        pitch, is_colour = _colour_pitch(bar, prof, root, slot, slots_per_bar)
+        pitch, is_colour = _colour_pitch(bar, prof, root_at(slot), slot, slots_per_bar)
         if is_colour:
             stats["colour"] += 1
         notes.append(

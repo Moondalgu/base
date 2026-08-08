@@ -65,6 +65,10 @@ class QuantizedNote:
     # 실제 음량(RMS). 하향에서 "이 마디에서 가장 센 엇박"을 찾을 때 쓴다 —
     # 확신도로는 셈이 되지 않는다(둘의 상관계수가 -0.20이다).
     loudness: float = 0.0
+    # 이 음이 온 검출 온셋의 원래 시각(초). 배치 원장(ledger)이 "검출이
+    # 어디였고 어느 슬롯으로 스냅됐는가"를 추적하는 데 쓴다.
+    # 음수 = 검출에서 온 것이 아니다(하향 템플릿·보정으로 만들어진 음).
+    src_start: float = -1.0
 
 
 @dataclass
@@ -173,6 +177,7 @@ def quantize(
                 residual=residual,
                 low_confidence=residual > SNAP_REJECT_RATIO,
                 loudness=note.loudness,
+                src_start=note.start,
             )
         )
         residuals.append(residual)

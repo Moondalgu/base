@@ -91,3 +91,90 @@ def align(note_times: list[float], syllables: list[dict]) -> list[str]:
         else:
             out.append("-")
     return out
+
+
+# ─── Gemini 교정 (선택 단계) ────────────────────────────────────────────────
+#
+# ASR은 발음이 비슷한 글자를 오인식한다(드라우닝 "미치도록"→"지치도록").
+# Gemini는 곡 제목으로 실제 가사를 알 수 있으므로 음절 단위 교정에 적합하다.
+#
+# 채점 가능성이 도입 조건이다(PRD 13.5): ①음절 개수·타임스탬프는 불변으로
+# 강제한다 — 개수가 어긋난 응답은 통째로 버린다(정렬이 밀리는 것이 오인식보다
+# 나쁘다) ②결과는 lyrics.json에 캐시되므로 재현성이 있다 ③참조 악보 가사와
+# 눈 대조로 검증한다. 실패·키 없음이면 조용히 원본 유지 — 이 단계는 보너스다.
+
+GEMINI_MODELS = ["gemini-3.1-pro-preview", "gemini-2.5-pro"]
+
+
+def _gemini_key() -> str | None:
+    import os
+    from pathlib import Path as _P
+
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        if os.environ.get(var):
+            return os.environ[var]
+    env = _P(r"C:\Users\admin\Desktop\bz\.env")
+    if env.exists():
+        for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if line.startswith("GEMINI_API_KEY") and "=" in line:
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+def refine_with_gemini(
+    syllables: list[dict], title: str, *, verbose: bool = False
+) -> list[dict]:
+    """ASR 음절 텍스트를 Gemini로 교정한다. 개수·시각 불변, 텍스트만 교체.
+
+    실패하면 원본을 그대로 돌려준다.
+    """
+    import urllib.error
+    import urllib.request
+
+    key = _gemini_key()
+    if not key or not syllables:
+        return syllables
+
+    texts = [s["text"] for s in syllables]
+    prompt = (
+        f'노래 "{title}"의 가사를 음성인식으로 딴 음절 배열이다. 오인식된 '
+        f"글자만 실제 가사로 고쳐라.\n"
+        f"규칙: 반드시 입력과 **같은 개수**의 JSON 문자열 배열로만 답한다. "
+        f"항목 순서·개수를 바꾸지 말고, 확실하지 않은 항목은 그대로 둔다. "
+        f"설명 금지.\n입력({len(texts)}개): {json.dumps(texts, ensure_ascii=False)}"
+    )
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 20000},
+    }).encode("utf-8")
+
+    for model in GEMINI_MODELS:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent?key={key}")
+        try:
+            req = urllib.request.Request(
+                url, data=payload, headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            parts = body["candidates"][0]["content"]["parts"]
+            text = "".join(p.get("text", "") for p in parts).strip()
+            if text.startswith("```"):
+                text = text.strip("`").lstrip("json").strip()
+            fixed = json.loads(text)
+            if (isinstance(fixed, list)
+                    and len(fixed) == len(texts)
+                    and all(isinstance(t, str) for t in fixed)):
+                changed = sum(1 for a, b in zip(texts, fixed) if a != b)
+                if verbose:
+                    print(f"[lyrics] Gemini 교정({model}): {changed}음절 변경")
+                return [
+                    {**s, "text": t} for s, t in zip(syllables, fixed)
+                ]
+            if verbose:
+                print(f"[lyrics] Gemini 응답 개수 불일치({model}) — 원본 유지")
+        except (urllib.error.URLError, KeyError, ValueError, json.JSONDecodeError) as exc:
+            if verbose:
+                print(f"[lyrics] Gemini 교정 실패({model}): {exc}")
+    return syllables

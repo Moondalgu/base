@@ -91,10 +91,14 @@ def rebuild_from_raw(
         key_signature=(key or {}).get("signatureName"),
         vocal_notes=vocal_notes,
         vocal_syllables=vocal_syllables,
+        chord_tones=chords.load_tones(workdir / "chords.json"),
         verbose=True,
     )
     qscore, fscore = built.qscore, built.fscore
     (workdir / "score.alphatex").write_text(built.tex, encoding="utf-8")
+    from pipeline import ledger as ledger_mod
+
+    ledger_mod.write(built.ledger or [], workdir / "ledger.csv")
 
     # 4) 품질 재계산 — clean_report(정리 단계 통계)는 이 시점에 없다.
     #    evaluate가 쓰는 것은 out_of_range_ratio 하나뿐이므로 기존 manifest의

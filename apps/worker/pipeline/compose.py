@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import alphatex, fretting, inertia, quantize, reduce
+from . import alphatex, fretting, inertia, ledger, quantize, reduce
 from .bassclean import Note
 from .beats import BeatGrid
 from .fretting import FrettedScore, TUNING_PRESETS
@@ -42,6 +42,9 @@ class BuiltScore:
     octave_folded: int
     # 표기 폴백이 걸렸는지. 셋잇단을 적을 수 없어 16분 격자로 되돌린 경우다.
     subdivision_forced: bool
+    # 음표 배치 원장 — 모든 음의 [검출 시각→슬롯→박 위치→피치 출처→현/프렛].
+    # "박자에 맞게 들어갔는가"를 데이터로 답한다 (pipeline/ledger.py 머리말).
+    ledger: list[dict] = None  # type: ignore[assignment]
 
 
 def build(
@@ -59,6 +62,7 @@ def build(
     key_signature: str | None = None,
     vocal_notes: list[Note] | None = None,
     vocal_syllables: list[dict] | None = None,
+    chord_tones: dict[int, frozenset[int]] | None = None,
 ) -> BuiltScore:
     """노트와 비트 그리드로 AlphaTex를 만든다.
 
@@ -91,7 +95,9 @@ def build(
         # 아니라 **검출 보정**이다(반복 구조로 놓친 타현을 되살린다). 그래서
         # 하향보다 앞에 오고 원본 단계에도 적용된다.
         qs, _inertia_report = inertia.apply_inertia(qs, verbose=verbose)
-        qs, report = reduce.reduce_score(qs, level, verbose=verbose)
+        qs, report = reduce.reduce_score(
+            qs, level, verbose=verbose, chord_tones=chord_tones
+        )
         fs = fretting.assign(
             qs, tuning, verbose=verbose,
             max_fret=profile.max_fret, max_move=profile.max_move,
@@ -109,6 +115,12 @@ def build(
                 vworking, grid,
                 force_subdivision=qs.subdivision, force_phase=qs.phase,
             )
+            # 보컬 슬롯을 8분 격자로 스냅한다. 보컬 조각이 홀수 16분 슬롯에
+            # 앉으면 시스템의 세로 정렬 열이 잘게 쪼개져서 — 트랙들이 열을
+            # 공유하므로 — 베이스의 균일 8분 간격까지 흔들리고, 커서의 픽셀
+            # 속도가 마디 안에서 오르내린다(등속으로 보이지 않는다). 참고용
+            # 멜로디에서 최대 1/16박 이동은 지면 안정과 맞바꿀 만하다.
+            _snap_vocal_to_eighths(vocal_q)
         return qs, fs, report, alphatex.build(
             fs, title=title, artist=artist, include_sync=include_sync,
             chords=chords, key_signature=key_signature, vocal=vocal_q,
@@ -126,6 +138,10 @@ def build(
         qscore, fscore, reduction, tex = build_from(4)
         subdivision_forced = True
 
+    note_ledger = ledger.rows(qscore, fscore)
+    if verbose:
+        print(f"[ledger] {ledger.summary(note_ledger)}")
+
     return BuiltScore(
         tex=tex,
         qscore=qscore,
@@ -135,7 +151,28 @@ def build(
         octave_folded=octave_folded,
         subdivision_forced=subdivision_forced,
         reduction=reduction,
+        ledger=note_ledger,
     )
+
+
+def _snap_vocal_to_eighths(vocal_q: QuantizedScore) -> None:
+    """보컬 음의 슬롯을 8분 자리(짝수 슬롯)로 반올림한다. 제자리 수정.
+
+    subdivision 4(16분 격자)에서만 의미가 있다 — 2·3이면 모든 슬롯이 이미
+    8분/셋잇단 자리다. 스냅으로 슬롯이 겹치면 확신도 높은 음만 남긴다.
+    """
+    if vocal_q.subdivision != 4:
+        return
+    for bar in vocal_q.bars:
+        seen: dict[int, object] = {}
+        for n in sorted(bar.notes, key=lambda x: -x.amplitude):
+            slot = min(bar.slots_per_bar - 2, round(n.slot / 2) * 2)
+            if slot in seen:
+                continue
+            n.slot = slot
+            n.duration_slots = max(2, (n.duration_slots // 2) * 2)
+            seen[slot] = n
+        bar.notes = sorted(seen.values(), key=lambda x: x.slot)  # type: ignore[arg-type]
 
 
 def _transpose_vocal(notes: list[Note], semitones: int) -> list[Note]:
