@@ -46,6 +46,8 @@ interface Props {
   tuning?: string;
   /** 악보가 그려졌는지 부모에게 알린다. 인쇄 버튼을 띄울지 판단하는 데 쓴다 */
   onReady?: (ready: boolean) => void;
+  /** 마디 시작 시각(초, beats.json 다운비트). 시크 동기화가 마디를 계산한다 */
+  barStarts?: number[];
 }
 
 type Status = "loading" | "ready" | "empty" | "error";
@@ -80,6 +82,7 @@ export default function ScoreView({
   transpose = 0,
   tuning,
   onReady,
+  barStarts,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
@@ -343,9 +346,37 @@ export default function ScoreView({
   }, [hash, level, transpose, tuning, applyTex]);
 
   // 재생 위치를 alphaTab에 밀어넣는다. 부모가 50ms 주기로 갱신한다.
+  //
+  // **시크 동기화** — 위치가 연속 재생으로 설명되지 않게 점프하면(시크 바
+  // 드래그·A/B 이동) 창과 스크롤을 그 마디로 직접 데려간다. 재생 중 창
+  // 이동은 playedBeatChanged가 담당하지만 그 이벤트는 **재생 중에만**
+  // 발화한다 — 일시정지 상태의 시크, 그리고 재생 중이라도 다음 비트 전까지의
+  // 공백은 이 경로가 메운다. 마디 시각은 barStarts(beats.json 다운비트)로
+  // 계산한다 — 악보 마디와 같은 격자에서 왔으므로 어긋나지 않는다.
+  const lastPositionRef = useRef(0);
   useEffect(() => {
     bridgeRef.current?.updatePosition(position);
-  }, [position]);
+    const jumped = Math.abs(position - lastPositionRef.current) > 1.5;
+    lastPositionRef.current = position;
+    if (!jumped || !barStarts?.length) return;
+    let idx = barStarts.findIndex((t) => t > position) - 1;
+    if (idx < -1) idx = barStarts.length - 1;   // 마지막 마디 이후
+    if (idx < 0) idx = 0;
+    const start = Math.floor(idx / PAGE_BARS) * PAGE_BARS + 1;
+    windowStartRef.current = start;
+    if (viewModeRef.current === "paged") {
+      applyWindow("paged", start);
+    } else {
+      // 전체 악보 — 커서가 그려진 뒤 그 마디로 스크롤한다. 커서 요소는
+      // 렌더 직후에나 자리를 잡으므로 한 프레임 늦춘다.
+      window.setTimeout(() => {
+        const cursor = hostRef.current?.querySelector(".at-cursor-bar");
+        (cursor as HTMLElement | null)?.scrollIntoView({
+          block: "center", behavior: "smooth",
+        });
+      }, 250);
+    }
+  }, [position, barStarts, applyWindow]);
 
   // 뷰를 바꾸면 표시 범위를 다시 건다. status가 바뀔 때도 한 번 걸어
   // 인스턴스가 늦게 준비된 경우를 메운다(applyWindow가 같은 범위면 건너뛴다).

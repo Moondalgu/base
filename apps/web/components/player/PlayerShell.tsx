@@ -311,6 +311,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         position={position}
         controlRef={scoreControlRef}
         qualityLevel={manifest?.quality?.level}
+        barStarts={beatGrid?.downbeats}
         level={level}
         transpose={semitones}
         tuning={tuning}
