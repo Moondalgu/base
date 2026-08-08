@@ -138,6 +138,16 @@ def transcribe_vocal_stage(
     return notes, syllables
 
 
+def clean_title(title: str) -> str:
+    """유튜브 제목의 "X (X)" 같은 중복 괄호를 접는다 — 악보 표제 잡음."""
+    import re
+
+    m = re.match(r"^(.*?)\s*[\(\[](.*?)[\)\]]\s*$", title)
+    if m and m.group(1).strip().casefold() == m.group(2).strip().casefold():
+        return m.group(1).strip()
+    return title
+
+
 class MissingOriginals(FileNotFoundError):
     """악보를 다시 그릴 원본이 없다. schemaVersion 1 산출물이면 이 상태다."""
 
@@ -166,7 +176,7 @@ def build_score_variant(
     manifest_path = workdir / "manifest.json"
     if manifest_path.exists():
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        title = data.get("source", {}).get("title") or title
+        title = clean_title(data.get("source", {}).get("title") or title)
         if tuning is None:
             tuning = data.get("tuning", {}).get("preset")
 

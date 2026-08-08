@@ -10,6 +10,10 @@
 
 스키마: [{"srcStart": 18.05, "action": "pitch", "pitch": 44}]
         [{"srcStart": 20.11, "action": "delete"}]
+        [{"srcStart": 96.40, "action": "add", "pitch": 40, "durationSec": 0.27}]
+
+add로 만든 음은 여느 검출 음과 똑같이 양자화→하향→운지를 탄다. 그래서
+추가한 직후 같은 에디터로 반음 조정·삭제가 된다(srcStart가 곧 신원).
 """
 
 from __future__ import annotations
@@ -60,6 +64,15 @@ def validate(edits) -> list[dict]:
             out.append({"srcStart": float(src), "action": "pitch", "pitch": p})
         elif action == "delete":
             out.append({"srcStart": float(src), "action": "delete"})
+        elif action == "add":
+            p = e.get("pitch")
+            if not isinstance(p, int) or not (10 <= p <= 90):
+                raise ValueError(f"pitch가 잘못됐습니다: {p!r}")
+            dur = e.get("durationSec", 0.25)
+            if not isinstance(dur, (int, float)) or not (0.05 <= dur <= 2.0):
+                raise ValueError(f"durationSec이 잘못됐습니다: {dur!r}")
+            out.append({"srcStart": float(src), "action": "add",
+                        "pitch": p, "durationSec": float(dur)})
         else:
             raise ValueError(f"action이 잘못됐습니다: {action!r}")
     return out
@@ -75,9 +88,10 @@ def apply(notes: list, edits: list[dict]) -> list:
         return notes
     from dataclasses import replace as _replace
 
+    mods = [e for e in edits if e["action"] != "add"]
     out = []
     for n in notes:
-        matched = [e for e in edits
+        matched = [e for e in mods
                    if abs(n.start - e["srcStart"]) <= MATCH_TOLERANCE_SEC]
         if not matched:
             out.append(n)
@@ -86,4 +100,22 @@ def apply(notes: list, edits: list[dict]) -> list:
         if e["action"] == "delete":
             continue
         out.append(_replace(n, pitch=e["pitch"]))
+
+    # 추가 음 — 검출 음과 같은 자격으로 뒤 단계(양자화·하향·운지)를 탄다.
+    # 같은 자리에 검출 음이 이미 있으면(재채보로 생겼을 수 있다) 추가하지
+    # 않는다 — 겹친 두 음은 단선율 정리에서 어느 쪽이 살지 알 수 없다.
+    if any(e["action"] == "add" for e in edits):
+        from .bassclean import Note as _Note
+
+        for e in edits:
+            if e["action"] != "add":
+                continue
+            if any(abs(n.start - e["srcStart"]) <= MATCH_TOLERANCE_SEC for n in out):
+                continue
+            out.append(_Note(
+                start=e["srcStart"], end=e["srcStart"] + e["durationSec"],
+                pitch=e["pitch"], amplitude=0.9,
+                detected_end=e["srcStart"] + e["durationSec"], loudness=0.0,
+            ))
+        out.sort(key=lambda n: n.start)
     return out

@@ -200,7 +200,7 @@ def build(
     if vocal is not None and any(b.notes for b in vocal.bars):
         lines.extend(_render_vocal_track(
             score, vocal, syllables=vocal_syllables,
-            flats=_uses_flats(key_signature),
+            flats=_uses_flats(key_signature), key_signature=key_signature,
         ))
         lines.append("")
     lines.append('\\track "Bass"')
@@ -213,6 +213,10 @@ def build(
     lines.append(
         f"\\staff{{score tabs}} \\clef bass \\tuning {_tuning_names(score.tuning)}"
     )
+    # 조표를 이 스태프에도 다시 적는다 — 헤더의 \ks는 첫 트랙에만 적용되어,
+    # 보컬 트랙이 생기면 베이스 오선이 조표를 잃는다(♯ 도배 실물 반증).
+    if key_signature:
+        lines.append(f"\\ks {key_signature}")
     lines.append(f"\\ts {score.beats_per_bar} 4")
     lines.append("")
 
@@ -270,7 +274,7 @@ def _vocal_pitch_name(midi: int, *, flats: bool = False) -> str:
 
 def _render_vocal_track(
     score: FrettedScore, vocal, syllables: list[dict] | None = None,
-    flats: bool = False,
+    flats: bool = False, key_signature: str | None = None,
 ) -> list[str]:
     """보컬 오선 트랙 전체를 적는다. 마디 수는 베이스 트랙과 정확히 맞춘다.
 
@@ -283,8 +287,12 @@ def _render_vocal_track(
     **여기서 방출한 음표 순서 그대로** 음절 토큰을 만들어야 한다. 그래서
     정렬을 이 함수 밖에서 할 수 없다 — 겹침 스킵·마디 절단이 여기서 일어난다.
     """
-    lines = ['\\track "Vocal"', "\\staff{score} \\clef treble",
-             f"\\ts {score.beats_per_bar} 4"]
+    lines = ['\\track "Vocal"', "\\staff{score} \\clef treble"]
+    # 조표는 트랙(스태프)마다 다시 적어야 한다 — 헤더의 \ks는 첫 트랙에만
+    # 적용된다(실물 반증: 3단 전환 후 베이스 오선만 조표를 잃고 ♯ 도배).
+    if key_signature:
+        lines.append(f"\\ks {key_signature}")
+    lines.append(f"\\ts {score.beats_per_bar} 4")
     vbars = {b.index: b for b in vocal.bars}
     table = _duration_table(vocal.subdivision)
     slots_per_bar = score.beats_per_bar * vocal.subdivision

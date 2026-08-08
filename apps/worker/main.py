@@ -214,6 +214,11 @@ async def score_ledger_json(
             # 클릭 좌표(마디 안 비율) → 슬롯 환산에 필요하다.
             "subdivision": built.fscore.subdivision,
             "beatsPerBar": built.fscore.beats_per_bar,
+            # **양자화 좌표계의** 마디 시작 시각. beats.json 다운비트와
+            # 위상 보정만큼(실측 ~0.5초) 어긋난다 — 음 추가가 다운비트로
+            # 시각을 계산하면 옆 슬롯에 앉는다(실측). 반드시 이걸 쓴다.
+            "barStarts": [round(b.start_sec, 4) for b in built.qscore.bars],
+            "barEnds": [round(b.end_sec, 4) for b in built.qscore.bars],
         }, ensure_ascii=False),
         media_type="application/json",
         headers={"Cache-Control": "no-store"},
@@ -254,6 +259,37 @@ async def put_edits(content_hash: str, body: dict) -> Response:
     edits_mod.save(workdir, validated)
     return Response(
         content=json_mod.dumps({"edits": validated}),
+        media_type="application/json",
+    )
+
+
+@app.put("/api/scores/{content_hash}/lyrics")
+async def put_lyric(content_hash: str, body: dict) -> Response:
+    """가사 음절 하나 교정 — {index, text}. 시각·개수는 불변(텍스트만).
+
+    ASR·Gemini 교정을 거쳐도 오인이 남는 것이 실증됐다(드라우닝 "미치도록").
+    마지막 통로는 사람이다 — 에디터의 가사 보정이 여기를 부른다.
+    """
+    import json as json_mod
+
+    workdir = jobs.DATA / content_hash
+    path = workdir / "lyrics.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="가사가 없는 곡입니다")
+    index = body.get("index")
+    text = body.get("text")
+    if not isinstance(index, int) or not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="index(정수)·text(문자열)가 필요합니다")
+    text = text.strip()
+    if not (0 < len(text) <= 8):
+        raise HTTPException(status_code=400, detail="음절 텍스트는 1~8자여야 합니다")
+    sylls = json_mod.loads(path.read_text(encoding="utf-8"))
+    if not (0 <= index < len(sylls)):
+        raise HTTPException(status_code=400, detail=f"index 범위 밖: {index}")
+    sylls[index]["text"] = text
+    path.write_text(json_mod.dumps(sylls, ensure_ascii=False, indent=1), encoding="utf-8")
+    return Response(
+        content=json_mod.dumps({"index": index, "text": text}),
         media_type="application/json",
     )
 

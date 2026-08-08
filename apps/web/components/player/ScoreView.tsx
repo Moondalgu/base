@@ -73,6 +73,12 @@ interface LedgerRow {
   source: string;
 }
 
+/** 보정 대상 — 베이스 음표 / 빈 자리(음 추가) / 보컬 가사 음절 */
+type Selection =
+  | { kind: "note"; row: LedgerRow }
+  | { kind: "rest"; bar: number; slot: number; time: number; duration: number; pitchGuess: number }
+  | { kind: "lyric"; index: number; text: string };
+
 type Status = "loading" | "ready" | "empty" | "error";
 
 /** 한 행에 놓을 마디 수. 참조 악보(akbobada)가 4마디씩이다. */
@@ -135,12 +141,26 @@ export default function ScoreView({
   // 보정은 원본 검출을 고치는 것이라(pipeline/edits.py) 모든 난이도에 전파된다.
   const [editMode, setEditMode] = useState(false);
   const editModeRef = useRef(false);
-  const [selected, setSelected] = useState<LedgerRow | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+  const [lyricDraft, setLyricDraft] = useState("");
   const ledgerRef = useRef<{
     rows: LedgerRow[];
     slotsPerBar: number;
+    /** 양자화 좌표계의 마디 시각 — beats.json 다운비트와 위상만큼 다르다 */
+    barStarts: number[];
+    barEnds: number[];
   } | null>(null);
+  // 가사(음절 시각 포함)와 마디 시각 — 클릭 좌표를 시간으로 바꾸는 지도들.
+  const lyricsRef = useRef<{ start: number; end: number; text: string }[] | null>(null);
+  // 마지막 포인터 좌표 — alphaTab의 beatMouseDown은 **x 기반**이라 어느
+  // 스태프(보컬/베이스)를 눌렀는지 못 준다(실측: 보컬 음표 클릭에 Bass 비트가
+  // 왔다). y는 우리가 잡아서 스태프를 직접 판별한다.
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const barStartsRef = useRef<number[] | undefined>(barStarts);
+  useEffect(() => {
+    barStartsRef.current = barStarts;
+  }, [barStarts]);
   const onEditsChangedRef = useRef(onEditsChanged);
   useEffect(() => {
     onEditsChangedRef.current = onEditsChanged;
@@ -225,6 +245,9 @@ export default function ScoreView({
           notation: {
             // TAB 줄 아래에 리듬 기둥을 그린다. 없으면 음표 길이를 알 수 없다.
             rhythmMode: alphaTab.TabRhythmMode.ShowWithBars,
+            // 다이내믹(f 따위)을 그리지 않는다 — 우리 tex에는 다이내믹 정보가
+            // 없어서 alphaTab 기본값 f가 첫 음마다 찍힌다. 참조 악보에 없는 잡음.
+            elements: { effectDynamics: false },
           },
           player: {
             // 외부 오디오(우리 StemPlayer)를 시간축으로 쓴다
@@ -273,7 +296,8 @@ export default function ScoreView({
           }
         });
 
-        // 편집 모드 — 클릭한 비트를 (마디, 슬롯)으로 환산해 원장에서 음을 찾는다.
+        // 편집 모드 — 클릭한 비트를 (마디, 슬롯)으로 환산한다.
+        // 베이스 음표 → 원장 매칭, 빈 자리 → 음 추가, 보컬 → 가사 음절 보정.
         // playbackStart의 기준(절대/마디 상대)이 버전에 따라 달라 둘 다 다룬다.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         api.beatMouseDown.on((beat: any) => {
@@ -281,10 +305,6 @@ export default function ScoreView({
           const bar = beat?.voice?.bar;
           const barIndex = bar?.index;
           if (typeof barIndex !== "number") return;
-          if (bar?.staff?.track?.name && bar.staff.track.name !== "Bass") {
-            setSelected(null); // 보컬 트랙은 편집 대상이 아니다
-            return;
-          }
           const info = ledgerRef.current;
           if (!info) return;
           const master = bar?.masterBar;
@@ -292,17 +312,113 @@ export default function ScoreView({
           let inBar = typeof beat?.playbackStart === "number" ? beat.playbackStart : 0;
           if (barStartTicks > 0 && inBar >= barStartTicks) inBar -= barStartTicks;
           const durTicks = master?.calculateDuration?.() ?? 3840;
-          const slot = Math.round((inBar / Math.max(1, durTicks)) * info.slotsPerBar);
-          const rows = info.rows.filter((r) => r.bar === barIndex + 1);
-          if (rows.length === 0) {
-            setSelected(null);
+          const ratio = inBar / Math.max(1, durTicks);
+          const slot = Math.round(ratio * info.slotsPerBar);
+
+          // 클릭 자리의 입력 시각 — **양자화 좌표계의 마디 시각**(원장 동봉)으로
+          // 환산한다. beats.json 다운비트는 위상 보정 전이라 ~0.5초 어긋나서
+          // 음 추가가 옆 슬롯에 앉는다(실측).
+          const barStart = info.barStarts[barIndex];
+          const barEnd = info.barEnds[barIndex];
+          const clickTime =
+            barStart !== undefined && barEnd !== undefined
+              ? barStart + ratio * (barEnd - barStart)
+              : null;
+
+          // 클릭한 스태프 판별 — 이 마디의 스태프별 세로 범위와 포인터 y를
+          // 대조한다. beat의 track은 x 기반이라 믿을 수 없다(위 주석).
+          let trackName = bar?.staff?.track?.name;
+          const pointer = lastPointerRef.current;
+          const host = hostRef.current;
+          if (pointer && host) {
+            const relY = pointer.y - host.getBoundingClientRect().y;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lookup: any = api.renderer?.boundsLookup;
+            // 스태프 순서는 트랙 선언 순서와 같다(트랙별 스태프 수 포함).
+            // BarBounds.bar가 런타임에 비어 있어 이름은 위치로 매핑한다.
+            const staffNames: string[] = [];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const tr of (api.score?.tracks ?? []) as any[]) {
+              for (let s = 0; s < (tr.staves?.length ?? 1); s++) staffNames.push(tr.name);
+            }
+            let bestName: string | null = null;
+            let bestGap = Infinity;
+            for (const sys of lookup?.staffSystems ?? []) {
+              for (const mb of sys.bars ?? []) {
+                if (mb.index !== barIndex) continue;
+                (mb.bars ?? []).forEach((staffBar: { visualBounds?: { y: number; h: number } }, i: number) => {
+                  const b = staffBar.visualBounds;
+                  const name = staffNames[i];
+                  if (!b || !name) return;
+                  const inside = relY >= b.y && relY <= b.y + b.h;
+                  const gap = inside ? 0 : Math.abs(relY - (b.y + b.h / 2));
+                  if (gap < bestGap) {
+                    bestGap = gap;
+                    bestName = name;
+                  }
+                });
+              }
+            }
+            if (bestName) trackName = bestName;
+          }
+          if (process.env.NODE_ENV !== "production") {
+            // 편집 클릭 진단 — E2E·콘솔에서 분기 탈락 지점을 즉시 본다
+            (window as unknown as { __lastEditClick?: unknown }).__lastEditClick = {
+              barIndex, trackName, slot, clickTime,
+              hasLyrics: Boolean(lyricsRef.current),
+              barStart, barEnd,
+            };
+          }
+          if (trackName && trackName !== "Bass") {
+            // 보컬 트랙 → 그 시각의 가사 음절을 찾아 보정 대상으로
+            const sylls = lyricsRef.current;
+            if (!sylls || clickTime === null) {
+              setSelected(null);
+              return;
+            }
+            let best = -1;
+            let bestGap = 0.6; // 보컬 8분 스냅 오차보다 넉넉하게
+            for (let i = 0; i < sylls.length; i++) {
+              const gap = Math.abs(sylls[i].start - clickTime);
+              if (gap < bestGap) {
+                bestGap = gap;
+                best = i;
+              }
+            }
+            if (best < 0) {
+              setSelected(null);
+              return;
+            }
+            setSelected({ kind: "lyric", index: best, text: sylls[best].text });
+            setLyricDraft(sylls[best].text);
             return;
           }
-          setSelected(
-            rows.reduce((a, b) =>
-              Math.abs(a.slot - slot) <= Math.abs(b.slot - slot) ? a : b,
-            ),
-          );
+
+          const rows = info.rows.filter((r) => r.bar === barIndex + 1);
+          const nearest = rows.length
+            ? rows.reduce((a, b) =>
+                Math.abs(a.slot - slot) <= Math.abs(b.slot - slot) ? a : b,
+              )
+            : null;
+          // 쉼표를 눌렀거나 근처(1슬롯 이내)에 음이 없으면 "음 추가" 대상이다.
+          if ((beat?.isRest || !nearest || Math.abs(nearest.slot - slot) > 1)
+              && clickTime !== null && barStart !== undefined && barEnd !== undefined) {
+            const slotSec = (barEnd - barStart) / info.slotsPerBar;
+            // 기준 피치: 같은 마디 → 앞 마디들에서 가장 가까운 검출 음
+            const before = info.rows.filter(
+              (r) => r.bar <= barIndex + 1 && Number.isFinite(Number(r.src_start_sec)),
+            );
+            const pitchGuess = before.length
+              ? Number(before[before.length - 1].pitch_detected)
+              : 33;
+            setSelected({
+              kind: "rest", bar: barIndex + 1, slot,
+              time: barStart + (slot / info.slotsPerBar) * (barEnd - barStart),
+              duration: slotSec, pitchGuess,
+            });
+            return;
+          }
+          if (nearest) setSelected({ kind: "note", row: nearest });
         });
 
         // 자동 넘김 — 연주 중인 마디가 창을 벗어나면 그 마디를 담는 창으로 옮긴다.
@@ -447,9 +563,21 @@ export default function ScoreView({
         ledgerRef.current = {
           rows: (data.rows ?? []) as LedgerRow[],
           slotsPerBar: (data.subdivision ?? 4) * (data.beatsPerBar ?? 4),
+          barStarts: (data.barStarts ?? []) as number[],
+          barEnds: (data.barEnds ?? []) as number[],
         };
       } catch {
         ledgerRef.current = null;
+      }
+      // 가사 음절(시각 포함) — 보컬 클릭을 음절로 바꾸는 지도. 없는 곡은 그냥 없음.
+      try {
+        const res = await fetch(`/api/artifacts/${hash}/lyrics.json`);
+        if (!cancelled && res.ok) {
+          const sylls = await res.json();
+          lyricsRef.current = Array.isArray(sylls) ? sylls : null;
+        }
+      } catch {
+        lyricsRef.current = null;
       }
     })();
     return () => {
@@ -463,7 +591,7 @@ export default function ScoreView({
    */
   const applyEdit = useCallback(
     async (action: "pitch" | "delete" | "revert", delta = 0) => {
-      const row = selected;
+      const row = selected?.kind === "note" ? selected.row : null;
       if (!row || editBusy) return;
       const src = Number(row.src_start_sec);
       if (!Number.isFinite(src)) return;
@@ -497,6 +625,54 @@ export default function ScoreView({
     },
     [selected, editBusy, hash],
   );
+
+  /** 빈 자리에 음 추가 — 추가된 음은 검출 음과 같은 자격이라 이후 반음↑↓·삭제가 된다 */
+  const applyAddNote = useCallback(async () => {
+    if (selected?.kind !== "rest" || editBusy) return;
+    setEditBusy(true);
+    try {
+      const cur = await fetch(`/api/scores/${hash}/edits`).then((r) => r.json());
+      const list = Array.isArray(cur?.edits) ? cur.edits : [];
+      list.push({
+        srcStart: Math.round(selected.time * 1000) / 1000,
+        action: "add",
+        pitch: selected.pitchGuess,
+        durationSec: Math.round(selected.duration * 1000) / 1000,
+      });
+      const res = await fetch(`/api/scores/${hash}/edits`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edits: list }),
+      });
+      if (res.ok) {
+        setSelected(null);
+        onEditsChangedRef.current?.();
+      }
+    } finally {
+      setEditBusy(false);
+    }
+  }, [selected, editBusy, hash]);
+
+  /** 가사 음절 텍스트 교정 — 시각·개수 불변 */
+  const applyLyric = useCallback(async () => {
+    if (selected?.kind !== "lyric" || editBusy) return;
+    const text = lyricDraft.trim();
+    if (!text || text === selected.text) return;
+    setEditBusy(true);
+    try {
+      const res = await fetch(`/api/scores/${hash}/lyrics`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index: selected.index, text }),
+      });
+      if (res.ok) {
+        setSelected(null);
+        onEditsChangedRef.current?.();
+      }
+    } finally {
+      setEditBusy(false);
+    }
+  }, [selected, editBusy, hash, lyricDraft]);
 
   // 재생 위치를 alphaTab에 밀어넣는다. 부모가 50ms 주기로 갱신한다.
   //
@@ -644,18 +820,50 @@ export default function ScoreView({
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs dark:border-amber-700 dark:bg-amber-950">
           {!selected && (
             <span className="text-neutral-600 dark:text-neutral-300">
-              악보에서 고칠 음표를 클릭하세요. 고친 내용은 모든 난이도에 반영됩니다.
+              고칠 것을 클릭하세요 — 베이스 음표(음정), 빈 자리(음 추가), 보컬 음표(가사).
+              고친 내용은 모든 난이도에 반영됩니다.
             </span>
           )}
-          {selected && selected.source !== "검출" && (
-            <span className="text-neutral-600 dark:text-neutral-300">
-              {`${selected.bar}마디의 이 음은 쉬운 버전이 자동으로 만든 음입니다 — 원본 난이도에서 원래 검출 음을 고쳐주세요.`}
-            </span>
-          )}
-          {selected && selected.source === "검출" && (
+          {selected?.kind === "rest" && (
             <>
               <span className="font-medium">
-                {`${selected.bar}마디 · ${selected.pitch_name || "음"} (${selected.string}현 ${selected.fret}프렛)`}
+                {`${selected.bar}마디 ${Math.floor(selected.slot / 2) + 1}박 — 빈 자리`}
+              </span>
+              <button onClick={() => void applyAddNote()} disabled={editBusy}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                title="근처 검출 음과 같은 음정으로 넣습니다. 넣은 뒤 반음↑↓로 다듬으세요.">
+                여기에 음 추가
+              </button>
+              {editBusy && <span className="text-neutral-400">저장 중…</span>}
+            </>
+          )}
+          {selected?.kind === "lyric" && (
+            <>
+              <span className="font-medium">가사 보정:</span>
+              <input
+                value={lyricDraft}
+                onChange={(e) => setLyricDraft(e.target.value)}
+                maxLength={8}
+                className="w-20 rounded-md border border-neutral-300 bg-white px-2 py-0.5 dark:border-neutral-600 dark:bg-neutral-900"
+                aria-label="가사 음절"
+              />
+              <button onClick={() => void applyLyric()}
+                disabled={editBusy || !lyricDraft.trim() || lyricDraft.trim() === selected.text}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800">
+                저장
+              </button>
+              {editBusy && <span className="text-neutral-400">저장 중…</span>}
+            </>
+          )}
+          {selected?.kind === "note" && selected.row.source !== "검출" && (
+            <span className="text-neutral-600 dark:text-neutral-300">
+              {`${selected.row.bar}마디의 이 음은 쉬운 버전이 자동으로 만든 음입니다 — 원본 난이도에서 원래 검출 음을 고쳐주세요.`}
+            </span>
+          )}
+          {selected?.kind === "note" && selected.row.source === "검출" && (
+            <>
+              <span className="font-medium">
+                {`${selected.row.bar}마디 · ${selected.row.pitch_name || "음"} (${selected.row.string}현 ${selected.row.fret}프렛)`}
               </span>
               <button onClick={() => void applyEdit("pitch", -1)} disabled={editBusy}
                 className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800">
@@ -724,6 +932,10 @@ export default function ScoreView({
           status === "ready" ? "opacity-100" : "opacity-0"
         }`}
         style={{ minHeight: status === "ready" ? undefined : 1 }}
+        onPointerDownCapture={(e) => {
+          // 스태프 판별용 — beatMouseDown보다 먼저(capture) 좌표를 잡아둔다
+          lastPointerRef.current = { x: e.clientX, y: e.clientY };
+        }}
       >
         <div ref={hostRef} />
       </div>

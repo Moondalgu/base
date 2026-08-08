@@ -90,12 +90,18 @@ export default function PlayerShell({ hash }: { hash: string }) {
   // 사용자 보정이 저장될 때마다 +1 — 악보·연주 이벤트가 같은 판을 다시 받는다.
   const [editsVersion, setEditsVersion] = useState(0);
 
+  // 유튜브 제목의 "X (X)" 중복 괄호를 접는다 — 워커(jobs.clean_title)와 같은 규칙.
+  const cleanTitle = (t: string) => {
+    const m = /^(.*?)\s*[([](.*?)[)\]]\s*$/.exec(t);
+    return m && m[1].trim().toLowerCase() === m[2].trim().toLowerCase() ? m[1].trim() : t;
+  };
+  const title = manifest?.source?.title ? cleanTitle(manifest.source.title) : undefined;
+
   // 브라우저 탭에 곡 제목 — 여러 곡을 탭으로 열어두고 연습하는 사용 방식에서
   // 탭을 구분할 유일한 단서다.
   useEffect(() => {
-    const title = manifest?.source?.title;
     if (title) document.title = `${title} — Lowend`;
-  }, [manifest]);
+  }, [title]);
 
   useEffect(() => {
     let disposed = false;
@@ -355,7 +361,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
     <div className="pb-48 sm:pb-40 lg:pb-32">
       <header className="mb-4 space-y-2">
         <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
-          {manifest?.source?.title ?? hash}
+          {title ?? hash}
         </h1>
         <div className="flex flex-wrap items-center gap-1.5">
           {manifest?.tempo?.medianBpm ? (
