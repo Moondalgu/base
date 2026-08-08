@@ -199,8 +199,12 @@ def build_score_variant(
 
         vocal_syllables = lyrics_mod.load_lyrics(lyrics_path)
 
+    # 사용자 보정(edits.json) — 검출 원본 위 오버레이. 여기(로드 직후)서
+    # 적용해야 하향·이조·운지 전부에 전파된다 (pipeline/edits.py 머리말).
+    from pipeline import edits as edits_mod
+
     return compose.build(
-        bassclean.load_notes(notes_path),
+        edits_mod.apply(bassclean.load_notes(notes_path), edits_mod.load(workdir)),
         beats.BeatGrid.from_json(beats_path),
         title=title,
         tuning=tuning or "standard",

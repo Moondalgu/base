@@ -185,6 +185,79 @@ async def score_ledger(
     )
 
 
+@app.get("/api/scores/{content_hash}/ledger.json")
+async def score_ledger_json(
+    content_hash: str,
+    level: int = compose.ORIGINAL_LEVEL,
+    transpose: int = 0,
+    tuning: str | None = None,
+) -> Response:
+    """원장을 JSON으로 — 편집 UI가 (마디, 슬롯) → 검출 시각(srcStart)을
+    찾는 데 쓴다. `/api/scores`와 같은 인자·같은 빌드를 탄다."""
+    import json as json_mod
+
+    try:
+        built = await asyncio.to_thread(
+            jobs.build_score_variant,
+            content_hash, level=level, transpose=transpose, tuning=tuning,
+        )
+    except jobs.MissingOriginals as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except compose.UnsupportedLevel as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=json_mod.dumps({
+            "rows": built.ledger or [],
+            # 클릭 좌표(마디 안 비율) → 슬롯 환산에 필요하다.
+            "subdivision": built.fscore.subdivision,
+            "beatsPerBar": built.fscore.beats_per_bar,
+        }, ensure_ascii=False),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/scores/{content_hash}/edits")
+async def get_edits(content_hash: str) -> Response:
+    """사용자 채보 보정 목록 (pipeline/edits.py)."""
+    import json as json_mod
+
+    from pipeline import edits as edits_mod
+
+    workdir = jobs.DATA / content_hash
+    if not workdir.exists():
+        raise HTTPException(status_code=404, detail="곡이 없습니다")
+    return Response(
+        content=json_mod.dumps({"edits": edits_mod.load(workdir)}),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.put("/api/scores/{content_hash}/edits")
+async def put_edits(content_hash: str, body: dict) -> Response:
+    """보정 목록 전체 교체 — 멱등. 형식이 틀리면 통째로 거부한다."""
+    import json as json_mod
+
+    from pipeline import edits as edits_mod
+
+    workdir = jobs.DATA / content_hash
+    if not workdir.exists():
+        raise HTTPException(status_code=404, detail="곡이 없습니다")
+    try:
+        validated = edits_mod.validate(body.get("edits"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    edits_mod.save(workdir, validated)
+    return Response(
+        content=json_mod.dumps({"edits": validated}),
+        media_type="application/json",
+    )
+
+
 @app.get("/api/scores/{content_hash}/synth-notes")
 async def score_synth_notes(
     content_hash: str,

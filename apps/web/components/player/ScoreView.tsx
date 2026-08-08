@@ -48,6 +48,22 @@ interface Props {
   onReady?: (ready: boolean) => void;
   /** 마디 시작 시각(초, beats.json 다운비트). 시크 동기화가 마디를 계산한다 */
   barStarts?: number[];
+  /** 사용자 보정이 저장될 때마다 부모가 올리는 판. 바뀌면 악보를 다시 받는다 */
+  editsVersion?: number;
+  /** 보정 저장 성공 콜백 — 부모가 editsVersion을 올려 전체(악보·연주)를 갱신한다 */
+  onEditsChanged?: () => void;
+}
+
+/** 원장 행 — 편집 UI가 쓰는 열만 */
+interface LedgerRow {
+  bar: number;
+  slot: number;
+  pitch_detected: number;
+  pitch_name: string;
+  string: string;
+  fret: number | string;
+  src_start_sec: number | string;
+  source: string;
 }
 
 type Status = "loading" | "ready" | "empty" | "error";
@@ -83,6 +99,8 @@ export default function ScoreView({
   tuning,
   onReady,
   barStarts,
+  editsVersion = 0,
+  onEditsChanged,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
@@ -102,6 +120,26 @@ export default function ScoreView({
   /** 현재 창의 첫 마디. alphaTab의 startBar와 같은 1-based */
   const windowStartRef = useRef(1);
   const onReadyRef = useRef(onReady);
+
+  // --- 채보 보정(편집) ---
+  // 클릭한 음을 원장(ledger)으로 특정해 검출 시각(srcStart) 기반 보정을 건다.
+  // 보정은 원본 검출을 고치는 것이라(pipeline/edits.py) 모든 난이도에 전파된다.
+  const [editMode, setEditMode] = useState(false);
+  const editModeRef = useRef(false);
+  const [selected, setSelected] = useState<LedgerRow | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const ledgerRef = useRef<{
+    rows: LedgerRow[];
+    slotsPerBar: number;
+  } | null>(null);
+  const onEditsChangedRef = useRef(onEditsChanged);
+  useEffect(() => {
+    onEditsChangedRef.current = onEditsChanged;
+  }, [onEditsChanged]);
+  useEffect(() => {
+    editModeRef.current = editMode;
+    if (!editMode) setSelected(null);
+  }, [editMode]);
 
   // 렌더 중에 ref를 쓰면 안 된다(react-hooks/refs). effect에서 동기화한다.
   // 부모가 매 렌더마다 새 콜백 객체를 만들어도 alphaTab 배선을 다시 하지 않게
@@ -226,6 +264,38 @@ export default function ScoreView({
           }
         });
 
+        // 편집 모드 — 클릭한 비트를 (마디, 슬롯)으로 환산해 원장에서 음을 찾는다.
+        // playbackStart의 기준(절대/마디 상대)이 버전에 따라 달라 둘 다 다룬다.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        api.beatMouseDown.on((beat: any) => {
+          if (disposed || !editModeRef.current) return;
+          const bar = beat?.voice?.bar;
+          const barIndex = bar?.index;
+          if (typeof barIndex !== "number") return;
+          if (bar?.staff?.track?.name && bar.staff.track.name !== "Bass") {
+            setSelected(null); // 보컬 트랙은 편집 대상이 아니다
+            return;
+          }
+          const info = ledgerRef.current;
+          if (!info) return;
+          const master = bar?.masterBar;
+          const barStartTicks = typeof master?.start === "number" ? master.start : 0;
+          let inBar = typeof beat?.playbackStart === "number" ? beat.playbackStart : 0;
+          if (barStartTicks > 0 && inBar >= barStartTicks) inBar -= barStartTicks;
+          const durTicks = master?.calculateDuration?.() ?? 3840;
+          const slot = Math.round((inBar / Math.max(1, durTicks)) * info.slotsPerBar);
+          const rows = info.rows.filter((r) => r.bar === barIndex + 1);
+          if (rows.length === 0) {
+            setSelected(null);
+            return;
+          }
+          setSelected(
+            rows.reduce((a, b) =>
+              Math.abs(a.slot - slot) <= Math.abs(b.slot - slot) ? a : b,
+            ),
+          );
+        });
+
         // 자동 넘김 — 연주 중인 마디가 창을 벗어나면 그 마디를 담는 창으로 옮긴다.
         // 재생 마디는 alphaTab이 커서를 옮길 때 같이 주는 Beat에서 얻는다
         // (beat.voice.bar.index는 0-based). 위치→마디 환산을 따로 하면 커서와
@@ -282,6 +352,10 @@ export default function ScoreView({
         });
 
         apiRef.current = api;
+        if (process.env.NODE_ENV !== "production") {
+          // 브라우저 콘솔·자동화에서 boundsLookup 등을 들여다보기 위한 개발용 훅
+          (window as unknown as { __alphaTab?: unknown }).__alphaTab = api;
+        }
         if (pendingTexRef.current !== null) {
           api.tex(pendingTexRef.current);
           pendingTexRef.current = null;
@@ -343,7 +417,77 @@ export default function ScoreView({
     return () => {
       cancelled = true;
     };
-  }, [hash, level, transpose, tuning, applyTex]);
+  }, [hash, level, transpose, tuning, applyTex, editsVersion]);
+
+  // 편집 모드가 켜져 있는 동안 원장을 들고 있는다 — 클릭한 비트를
+  // (마디, 슬롯)으로 환산해 검출 시각을 찾는 유일한 지도다.
+  useEffect(() => {
+    if (!editMode) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams({
+          level: String(level),
+          transpose: String(transpose),
+        });
+        if (tuning) params.set("tuning", tuning);
+        const res = await fetch(`/api/scores/${hash}/ledger/json?${params}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled) return;
+        ledgerRef.current = {
+          rows: (data.rows ?? []) as LedgerRow[],
+          slotsPerBar: (data.subdivision ?? 4) * (data.beatsPerBar ?? 4),
+        };
+      } catch {
+        ledgerRef.current = null;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editMode, hash, level, transpose, tuning, editsVersion]);
+
+  /**
+   * 선택한 음에 보정을 저장한다. 목록 전체를 받아 그 음의 기존 보정을 걷어내고
+   * 새 보정을 얹어 PUT — 멱등이라 재시도·중복 클릭에 안전하다.
+   */
+  const applyEdit = useCallback(
+    async (action: "pitch" | "delete" | "revert", delta = 0) => {
+      const row = selected;
+      if (!row || editBusy) return;
+      const src = Number(row.src_start_sec);
+      if (!Number.isFinite(src)) return;
+      setEditBusy(true);
+      try {
+        const cur = await fetch(`/api/scores/${hash}/edits`).then((r) => r.json());
+        type EditItem = { srcStart: number; action: string; pitch?: number };
+        let list: EditItem[] = Array.isArray(cur?.edits) ? cur.edits : [];
+        list = list.filter((e) => Math.abs(e.srcStart - src) > 0.03);
+        if (action === "pitch") {
+          list.push({
+            srcStart: src,
+            action: "pitch",
+            pitch: Number(row.pitch_detected) + delta,
+          });
+        } else if (action === "delete") {
+          list.push({ srcStart: src, action: "delete" });
+        }
+        const res = await fetch(`/api/scores/${hash}/edits`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ edits: list }),
+        });
+        if (res.ok) {
+          setSelected(null);
+          onEditsChangedRef.current?.();
+        }
+      } finally {
+        setEditBusy(false);
+      }
+    },
+    [selected, editBusy, hash],
+  );
 
   // 재생 위치를 alphaTab에 밀어넣는다. 부모가 50ms 주기로 갱신한다.
   //
@@ -428,6 +572,18 @@ export default function ScoreView({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEditMode((v) => !v)}
+            className={`rounded-lg border px-2.5 py-1 text-xs transition ${
+              editMode
+                ? "border-amber-500 bg-amber-500 font-semibold text-white"
+                : "border-neutral-200 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            }`}
+            aria-pressed={editMode}
+            title="자동 채보가 틀린 음을 클릭해서 고칩니다. 고친 내용은 모든 난이도에 반영됩니다."
+          >
+            {editMode ? "보정 중" : "보정"}
+          </button>
           <span className="hidden text-xs text-neutral-500 sm:inline dark:text-neutral-400">보기</span>
           <div className="inline-flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-neutral-800">
             {(
@@ -452,6 +608,56 @@ export default function ScoreView({
           </div>
         </div>
       </div>
+
+      {/* 보정 패널 — 악보 위 고정 바. 팝오버 좌표 계산 없이 항상 같은 자리라
+          클릭→확인→저장의 시선 이동이 짧다. */}
+      {editMode && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs dark:border-amber-700 dark:bg-amber-950">
+          {!selected && (
+            <span className="text-neutral-600 dark:text-neutral-300">
+              악보에서 고칠 음표를 클릭하세요. 고친 내용은 모든 난이도에 반영됩니다.
+            </span>
+          )}
+          {selected && selected.source !== "검출" && (
+            <span className="text-neutral-600 dark:text-neutral-300">
+              {`${selected.bar}마디의 이 음은 쉬운 버전이 자동으로 만든 음입니다 — 원본 난이도에서 원래 검출 음을 고쳐주세요.`}
+            </span>
+          )}
+          {selected && selected.source === "검출" && (
+            <>
+              <span className="font-medium">
+                {`${selected.bar}마디 · ${selected.pitch_name || "음"} (${selected.string}현 ${selected.fret}프렛)`}
+              </span>
+              <button onClick={() => void applyEdit("pitch", -1)} disabled={editBusy}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800">
+                반음 ↓
+              </button>
+              <button onClick={() => void applyEdit("pitch", +1)} disabled={editBusy}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800">
+                반음 ↑
+              </button>
+              <button onClick={() => void applyEdit("pitch", -12)} disabled={editBusy}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800">
+                옥타브 ↓
+              </button>
+              <button onClick={() => void applyEdit("pitch", +12)} disabled={editBusy}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800">
+                옥타브 ↑
+              </button>
+              <button onClick={() => void applyEdit("delete")} disabled={editBusy}
+                className="rounded-md border border-red-300 bg-white px-2 py-0.5 text-red-600 hover:bg-red-50 disabled:opacity-40 dark:border-red-700 dark:bg-neutral-900 dark:hover:bg-red-950">
+                삭제
+              </button>
+              <button onClick={() => void applyEdit("revert")} disabled={editBusy}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                title="이 음에 저장된 보정을 지우고 자동 채보 값으로 되돌립니다">
+                보정 취소
+              </button>
+              {editBusy && <span className="text-neutral-400">저장 중…</span>}
+            </>
+          )}
+        </div>
+      )}
 
       {status === "loading" && <p className="text-sm text-neutral-500">악보를 그리는 중…</p>}
 

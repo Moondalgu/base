@@ -87,6 +87,8 @@ export default function PlayerShell({ hash }: { hash: string }) {
   const [synthGain, setSynthGain] = useState(SYNTH_DEFAULT_GAIN);
   // 켜기 직전 베이스 볼륨. 끌 때 사용자가 쓰던 값으로 되돌린다.
   const bassBeforeSynth = useRef(1);
+  // 사용자 보정이 저장될 때마다 +1 — 악보·연주 이벤트가 같은 판을 다시 받는다.
+  const [editsVersion, setEditsVersion] = useState(0);
 
   // 브라우저 탭에 곡 제목 — 여러 곡을 탭으로 열어두고 연습하는 사용 방식에서
   // 탭을 구분할 유일한 단서다.
@@ -321,7 +323,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
     return () => {
       stale = true;
     };
-  }, [synthOn, hash, level, semitones, tuning]);
+  }, [synthOn, hash, level, semitones, tuning, editsVersion]);
 
   if (status === "loading") {
     return <p className="text-sm text-neutral-500">스템을 불러오는 중…</p>;
@@ -377,6 +379,8 @@ export default function PlayerShell({ hash }: { hash: string }) {
         transpose={semitones}
         tuning={tuning}
         onReady={setScoreReady}
+        editsVersion={editsVersion}
+        onEditsChanged={() => setEditsVersion((v) => v + 1)}
         callbacks={{
           play: () => {
             void toggleTo(true);
