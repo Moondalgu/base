@@ -185,6 +185,45 @@ async def score_ledger(
     )
 
 
+@app.get("/api/scores/{content_hash}/synth-notes")
+async def score_synth_notes(
+    content_hash: str,
+    level: int = compose.ORIGINAL_LEVEL,
+    transpose: int = 0,
+    tuning: str | None = None,
+) -> Response:
+    """악보 연주 이벤트 — 화면 악보와 같은 변형의 음표 타임라인(JSON).
+
+    웹 베이스 샘플러가 원곡 반주 위에 악보를 연주할 때 쓴다. `/api/scores`와
+    같은 인자·같은 `compose.build()`를 탄다 — 보이는 TAB과 들리는 소리가
+    달라지면 안 된다.
+    """
+    import json as json_mod
+
+    from pipeline import perform
+
+    try:
+        built = await asyncio.to_thread(
+            jobs.build_score_variant,
+            content_hash, level=level, transpose=transpose, tuning=tuning,
+        )
+    except jobs.MissingOriginals as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except compose.UnsupportedLevel as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=json_mod.dumps(
+            {"level": built.level, "transpose": built.transpose,
+             "notes": perform.events(built.qscore, built.fscore)}
+        ),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/exports/{content_hash}.{fmt}")
 async def score_export(
     content_hash: str,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_GAINS,
   PRESETS,
+  SYNTH_DEFAULT_GAIN,
   StemPlayer,
   snapToDownbeat,
   stemUrls,
@@ -81,6 +82,11 @@ export default function PlayerShell({ hash }: { hash: string }) {
   const [loopEnd, setLoopEnd] = useState<number | null>(null);
   const [metronome, setMetronome] = useState(false);
   const [scoreReady, setScoreReady] = useState(false);
+  // 악보 연주 — 원곡 베이스를 빼고 화면 악보를 샘플러로 연주한다.
+  const [synthOn, setSynthOn] = useState(false);
+  const [synthGain, setSynthGain] = useState(SYNTH_DEFAULT_GAIN);
+  // 켜기 직전 베이스 볼륨. 끌 때 사용자가 쓰던 값으로 되돌린다.
+  const bassBeforeSynth = useRef(1);
 
   // 브라우저 탭에 곡 제목 — 여러 곡을 탭으로 열어두고 연습하는 사용 방식에서
   // 탭을 구분할 유일한 단서다.
@@ -135,10 +141,12 @@ export default function PlayerShell({ hash }: { hash: string }) {
         player.setBeatGrid(grid);
         playerRef.current = player;
         setDuration(player.duration);
-        // 곡이 바뀌면 새 엔진에는 구간·메트로놈이 없다. 표시도 같이 되돌린다.
+        // 곡이 바뀌면 새 엔진에는 구간·메트로놈·악보 연주가 없다. 표시도 같이 되돌린다.
         setLoopStart(null);
         setLoopEnd(null);
         setMetronome(false);
+        setSynthOn(false);
+        setSynthGain(SYNTH_DEFAULT_GAIN);
         setStatus("ready");
         if (process.env.NODE_ENV !== "production") {
           // 브라우저 콘솔·자동화에서 엔진 상태를 들여다보기 위한 개발용 훅
@@ -262,6 +270,59 @@ export default function PlayerShell({ hash }: { hash: string }) {
     setActivePreset(key);
   }, []);
 
+  /**
+   * 악보 연주 토글 — 켜면 원곡 베이스를 뮤트하고 화면 악보를 샘플러로
+   * 연주한다(끌 때 쓰던 볼륨으로 복귀). 같은 소리가 두 겹으로 어긋나게
+   * 울리는 것이 최악이라, 토글이 뮤트까지 책임진다.
+   */
+  const toggleSynth = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    const next = !player.synthEnabled;
+    if (next) {
+      bassBeforeSynth.current = player.gains.bass;
+      player.setGain("bass", 0);
+    } else {
+      player.setGain("bass", bassBeforeSynth.current || 1);
+    }
+    player.setSynthEnabled(next);
+    setGains(player.gains);
+    setActivePreset(null);
+    setSynthOn(next);
+  }, []);
+
+  const handleSynthGain = useCallback((value: number) => {
+    playerRef.current?.setSynthGain(value);
+    setSynthGain(playerRef.current?.synthGain ?? value);
+  }, []);
+
+  // 악보 연주 이벤트는 화면 악보와 같은 변형(난이도·키·튜닝)이어야 한다.
+  // 켜져 있는 동안 그 값이 바뀌면 같은 인자로 다시 받는다.
+  useEffect(() => {
+    if (!synthOn) return;
+    const player = playerRef.current;
+    if (!player) return;
+    let stale = false;
+    (async () => {
+      try {
+        const query = new URLSearchParams({
+          level: String(level),
+          transpose: String(semitones),
+        });
+        if (tuning && tuning !== "standard") query.set("tuning", tuning);
+        const res = await fetch(`/api/scores/${hash}/synth-notes?${query}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!stale && Array.isArray(data?.notes)) player.setSynthNotes(data.notes);
+      } catch {
+        // 워커가 없으면 연주 모드도 없다 — 반주는 그대로 나온다.
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [synthOn, hash, level, semitones, tuning]);
+
   if (status === "loading") {
     return <p className="text-sm text-neutral-500">스템을 불러오는 중…</p>;
   }
@@ -364,6 +425,10 @@ export default function PlayerShell({ hash }: { hash: string }) {
           onGainChange={handleGain}
           onPreset={handlePreset}
           activePreset={activePreset}
+          synthOn={synthOn}
+          synthGain={synthGain}
+          onSynthToggle={toggleSynth}
+          onSynthGain={handleSynthGain}
         />
       </div>
 

@@ -26,6 +26,11 @@ interface Props {
   onGainChange: (stem: StemName, value: number) => void;
   onPreset: (key: string) => void;
   activePreset: string | null;
+  /** 악보 연주 모드 — 원곡 베이스를 빼고 화면 악보를 샘플러로 연주한다 */
+  synthOn: boolean;
+  synthGain: number;
+  onSynthToggle: () => void;
+  onSynthGain: (value: number) => void;
 }
 
 /**
@@ -35,12 +40,22 @@ interface Props {
  * 사람이 가장 자주 확인하는 값이고, 0인 줄 모르고 "소리가 안 난다"고 볼 수
  * 있는 값이기도 하다. 베이스 줄만 포인트색을 쓴 것도 같은 이유다.
  */
-export default function StemMixer({ gains, onGainChange, onPreset, activePreset }: Props) {
+export default function StemMixer({
+  gains,
+  onGainChange,
+  onPreset,
+  activePreset,
+  synthOn,
+  synthGain,
+  onSynthToggle,
+  onSynthGain,
+}: Props) {
   return (
     <details open className={`group ${CARD}`}>
       <summary className={PANEL_SUMMARY}>
         <span className="mr-auto">스템 볼륨</span>
         <span className="flex flex-wrap items-center justify-end gap-1.5">
+          {synthOn && <span className={BADGE}>악보 연주</span>}
           {activePreset && PRESETS[activePreset] && (
             <span className={BADGE}>{PRESETS[activePreset].label}</span>
           )}
@@ -64,6 +79,32 @@ export default function StemMixer({ gains, onGainChange, onPreset, activePreset 
               {preset.label}
             </button>
           ))}
+        </div>
+
+        {/* 악보 연주 — 원곡 베이스를 빼고 화면 악보(현재 난이도·키)를 샘플러로
+            연주한다. 초보가 "정답 소리"를 들으며 따라 치는 용도라 기본 부스트. */}
+        <div className="flex items-center gap-3 rounded-lg border border-neutral-200 px-3 py-2 dark:border-neutral-700">
+          <button
+            onClick={onSynthToggle}
+            className={chip(synthOn)}
+            title="원곡 베이스 대신 화면 악보를 연주합니다. 난이도·키를 바꾸면 소리도 따라갑니다."
+          >
+            {synthOn ? "악보 연주 중" : "악보 연주"}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={2.5}
+            step={0.01}
+            value={synthGain}
+            onChange={(e) => onSynthGain(Number(e.target.value))}
+            disabled={!synthOn}
+            className={`${SLIDER_ACCENT} flex-1 disabled:opacity-40`}
+            aria-label="악보 연주 볼륨"
+          />
+          <span className="w-10 shrink-0 text-right font-mono text-xs tabular-nums text-neutral-500">
+            {Math.round(synthGain * 100)}%
+          </span>
         </div>
 
         <div className="space-y-2.5">

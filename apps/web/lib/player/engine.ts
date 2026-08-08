@@ -89,6 +89,18 @@ const CLOCK_RESYNC_SEC = 0.15;
 /** 검출 다운비트를 비트 배열에 붙일 때 허용하는 오차(초). 균일 격자면 값이 정확히 일치한다 */
 const DOWNBEAT_MATCH_SEC = 0.06;
 
+/** 정렬된 배열에서 key(item) ≥ value 인 첫 인덱스 */
+function lowerBoundBy<T>(items: T[], value: number, key: (item: T) => number): number {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (key(items[mid]) < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /** 정렬된 배열에서 value 이상인 첫 인덱스 */
 function lowerBound(values: number[], value: number): number {
   let lo = 0;
@@ -122,6 +134,72 @@ export const PRESETS: Record<string, { label: string; gains: Gains }> = {
   minusBass: { label: "베이스 빼고", gains: { drums: 1, bass: 0, vocals: 1, other: 1 } },
   rhythm: { label: "베이스+드럼", gains: { drums: 1, bass: 1, vocals: 0, other: 0 } },
 };
+
+/**
+ * 악보 연주 이벤트 (`/api/scores/{hash}/synth-notes`).
+ * 시각·길이는 **입력 타임라인의 초** — 배속 환산은 스케줄러가 한다.
+ */
+export interface SynthNote {
+  t: number;
+  d: number;
+  midi: number;
+  v: number;
+}
+
+/** 단음 샘플 에셋 범위 (tools/gen_bass_samples.py와 같은 값) */
+const SAMPLE_MIDI_LO = 22;
+const SAMPLE_MIDI_HI = 62;
+/** 릴리스 엔벨로프(초). 샘플 꼬리를 듀레이션에 맞춰 자를 때 쓴다 */
+const VOICE_RELEASE_SEC = 0.09;
+/** 악보 연주 기본 게인 — 원곡 베이스 자리를 대신하므로 또렷하게(부스트) */
+export const SYNTH_DEFAULT_GAIN = 1.3;
+
+/**
+ * 베이스 단음 샘플러 — 사운드폰트(sonivox.sf2)에서 미리 구운 단음 PCM을
+ * 받아 AudioBufferSourceNode로 튼다. sf2 런타임을 통째로 들이는 것보다
+ * 코드가 압도적으로 작고, 같은 입력이면 같은 소리가 난다.
+ */
+class BassSampler {
+  private ctx: AudioContext | OfflineAudioContext;
+  private buffers = new Map<number, AudioBuffer>();
+  private loading = new Map<number, Promise<void>>();
+
+  constructor(ctx: AudioContext | OfflineAudioContext) {
+    this.ctx = ctx;
+  }
+
+  /** 음역 밖 피치는 샘플이 있는 옥타브로 접는다 */
+  static fold(midi: number): number {
+    let m = midi;
+    while (m < SAMPLE_MIDI_LO) m += 12;
+    while (m > SAMPLE_MIDI_HI) m -= 12;
+    return m;
+  }
+
+  get(midi: number): AudioBuffer | null {
+    return this.buffers.get(BassSampler.fold(midi)) ?? null;
+  }
+
+  /** 필요한 피치를 미리 내려받아 디코딩해 둔다. 스케줄 시점 fetch는 늦다 */
+  prefetch(midis: Iterable<number>): void {
+    for (const raw of new Set([...midis].map(BassSampler.fold))) {
+      if (this.buffers.has(raw) || this.loading.has(raw)) continue;
+      const p = (async () => {
+        try {
+          const res = await fetch(`/synth/bass/${raw}.wav`);
+          if (!res.ok) return;
+          const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());
+          this.buffers.set(raw, buf);
+        } catch {
+          // 샘플 하나가 없다고 연주 전체를 세우지 않는다 — 그 음만 쉰다.
+        } finally {
+          this.loading.delete(raw);
+        }
+      })();
+      this.loading.set(raw, p);
+    }
+  }
+}
 
 export interface StemPlayerOptions {
   /** 스템 이름 → 오디오 URL */
@@ -174,6 +252,19 @@ export class StemPlayer {
   private _metroLastOutput = 0;
   /** 이미 예약해둔 클릭. 끌 때 취소하지 않으면 lookahead만큼 더 울린다 */
   private _pendingClicks: OscillatorNode[] = [];
+
+  // --- 악보 연주 (베이스 샘플러) ---
+  // 메트로놈과 같은 시계(_metroBase)·같은 lookahead 방식으로 악보 음표를
+  // 예약한다. 스트레치 그래프에 트랙을 넣지 않는 이유: 이 방식은 배속을
+  // 바꿔도 음정이 안 변하고, 난이도·이조 전환이 음표 목록 교체 하나로 끝난다.
+  private _sampler: BassSampler | null = null;
+  private _synthNotes: SynthNote[] = [];
+  private _synthOn = false;
+  private _synthGain = SYNTH_DEFAULT_GAIN;
+  private _synthTimer: number | null = null;
+  private _synthCursor = -1;
+  private _synthLastOutput = 0;
+  private _pendingVoices: AudioBufferSourceNode[] = [];
 
   private constructor(
     ctx: AudioContext | OfflineAudioContext,
@@ -306,12 +397,14 @@ export class StemPlayer {
     this._pendingSeek = null;
     this._playing = true;
     if (this._metronome) this.startMetronomeTimer();
+    if (this._synthOn) this.startSynthTimer();
   }
 
   pause(): void {
     this.stretch?.stop();
     this._playing = false;
     this.stopMetronomeTimer();
+    this.stopSynthTimer();
   }
 
   seek(seconds: number): void {
@@ -411,8 +504,41 @@ export class StemPlayer {
     else this.stopMetronomeTimer();
   }
 
+  get synthEnabled(): boolean {
+    return this._synthOn;
+  }
+
+  get synthGain(): number {
+    return this._synthGain;
+  }
+
+  /**
+   * 악보 연주 이벤트 교체 — 난이도·이조를 바꾸면 화면 악보와 함께 이 목록도
+   * 같은 변형으로 다시 받아야 한다(보이는 TAB ≠ 들리는 소리 금지).
+   */
+  setSynthNotes(notes: SynthNote[] | null): void {
+    this._synthNotes = notes ? [...notes].sort((a, b) => a.t - b.t) : [];
+    this._synthCursor = -1;
+    if (this._synthNotes.length > 0) {
+      this._sampler ??= new BassSampler(this.ctx);
+      this._sampler.prefetch(this._synthNotes.map((n) => n.midi));
+    }
+  }
+
+  setSynthEnabled(enabled: boolean): void {
+    this._synthOn = enabled;
+    if (enabled && this._playing) this.startSynthTimer();
+    else this.stopSynthTimer();
+  }
+
+  /** 0 ~ 2.5. 원곡 베이스 대신 울리는 소리라 기본이 이미 부스트(1.3)다 */
+  setSynthGain(value: number): void {
+    this._synthGain = Math.max(0, Math.min(2.5, value));
+  }
+
   async close(): Promise<void> {
     this.stopMetronomeTimer();
+    this.stopSynthTimer();
     this.stretch?.stop();
     // OfflineAudioContext에는 close()가 없다
     if ("close" in this.ctx) await (this.ctx as AudioContext).close();
@@ -430,6 +556,7 @@ export class StemPlayer {
     if (this._metroBase === null || Math.abs(base - this._metroBase) > CLOCK_RESYNC_SEC) {
       this._metroBase = base;
       this._metroCursor = -1;
+      this._synthCursor = -1;
     }
     this.options.onPosition?.(input);
   }
@@ -499,6 +626,108 @@ export class StemPlayer {
     }
   }
 
+  private startSynthTimer(): void {
+    if (this._synthTimer !== null) return;
+    if (!("close" in this.ctx)) return; // OfflineAudioContext — 실시간 시계 없음
+    this._synthTimer = window.setInterval(
+      () => this.synthTick(),
+      METRONOME_TICK_SEC * 1000,
+    );
+  }
+
+  private stopSynthTimer(): void {
+    if (this._synthTimer === null) return;
+    window.clearInterval(this._synthTimer);
+    this._synthTimer = null;
+    this._synthCursor = -1;
+    this._synthLastOutput = 0;
+    this.killVoices();
+  }
+
+  /** 울리는 중이거나 예약된 음을 전부 끊는다 — 시크·정지 후 잔향 방지 */
+  private killVoices(): void {
+    for (const v of this._pendingVoices) {
+      try {
+        v.stop();
+      } catch {
+        // 아직 start 전이면 stop이 던진다 — 버릴 노드라 상관없다.
+      }
+    }
+    this._pendingVoices = [];
+  }
+
+  /**
+   * 악보 연주 스케줄러 — metronomeTick과 같은 구조, 같은 시계(_metroBase).
+   * 비트 대신 음표를 예약하고, 루프 되감기도 같은 방식으로 앞서 반영한다.
+   */
+  private synthTick(): void {
+    if (!this._playing || !this._synthOn || this._synthNotes.length === 0) return;
+    let base = this._metroBase;
+    if (base === null) return;
+
+    const now = this.ctx.currentTime;
+    const horizon = now + METRONOME_LOOKAHEAD_SEC;
+    if (this._synthCursor < 0) {
+      this._synthCursor = lowerBoundBy(
+        this._synthNotes, (now - base) * this._rate, (n) => n.t,
+      );
+    }
+
+    let wraps = 0;
+    while (wraps <= 2) {
+      const loop = this._loop;
+      const cursor = this._synthCursor;
+      const note = cursor < this._synthNotes.length ? this._synthNotes[cursor] : null;
+
+      if (loop && (note === null || note.t >= loop.end)) {
+        base += (loop.end - loop.start) / this._rate;
+        this._metroBase = base;
+        this._synthCursor = lowerBoundBy(this._synthNotes, loop.start, (n) => n.t);
+        // 메트로놈 커서는 건드리지 않는다 — 자기 틱에서 같은 base로 다시 잡는다.
+        this._metroCursor = -1;
+        wraps++;
+        continue;
+      }
+      if (note === null) return;
+
+      const out = base + note.t / this._rate;
+      if (out > horizon) return;
+      this._synthCursor = cursor + 1;
+      if (out >= now && out > this._synthLastOutput + 0.0005) {
+        this.scheduleVoice(note, out);
+        this._synthLastOutput = out;
+      }
+    }
+  }
+
+  /** 음표 한 개 — 단음 샘플 + 듀레이션 엔벨로프. 길이는 출력 시간으로 환산 */
+  private scheduleVoice(note: SynthNote, at: number): void {
+    const buffer = this._sampler?.get(note.midi);
+    if (!buffer) return; // 아직 디코딩 전이거나 없는 샘플 — 그 음만 쉰다
+
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const gain = ctx.createGain();
+    const peak = Math.max(0.05, Math.min(2.5, note.v * this._synthGain));
+    // 배속을 늦추면 음 간격이 늘어나므로 지속도 같이 늘린다(음정은 불변).
+    const durOut = Math.max(0.12, note.d / this._rate);
+    const sustainEnd = at + Math.min(durOut, buffer.duration - VOICE_RELEASE_SEC);
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(peak, at + 0.004);
+    gain.gain.setValueAtTime(peak, sustainEnd);
+    gain.gain.exponentialRampToValueAtTime(0.0001, sustainEnd + VOICE_RELEASE_SEC);
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(at);
+    src.stop(sustainEnd + VOICE_RELEASE_SEC + 0.02);
+    this._pendingVoices.push(src);
+    src.onended = () => {
+      const i = this._pendingVoices.indexOf(src);
+      if (i >= 0) this._pendingVoices.splice(i, 1);
+    };
+  }
+
   /** 클릭 한 방. 오실레이터 + 짧은 감쇠 엔벨로프 */
   private scheduleClick(at: number, accent: boolean): void {
     const ctx = this.ctx;
@@ -530,6 +759,10 @@ export class StemPlayer {
     // 다시 잡게 비워둔다.
     this._metroBase = null;
     this._metroCursor = -1;
+    this._synthCursor = -1;
+    // 시크하면 옛 위치의 음이 울리는 중일 수 있다. 클릭(50ms)과 달리 음표는
+    // 초 단위로 지속되므로 반드시 끊어야 한다.
+    this.killVoices();
     this.stretch.schedule({
       output: this.ctx.currentTime,
       rate: this._rate,
