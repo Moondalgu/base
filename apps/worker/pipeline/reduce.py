@@ -125,12 +125,15 @@ LEVELS: dict[int, LevelProfile] = {
         # max_fret 9: 참조 악보 초급판의 실사용 프렛이 1~9다(위 주석).
         # 7로 두면 E현 8프렛(C)이 후보에서 원천 배제되어 참조 포지션을
         # 재현할 수 없다 — 사용자가 실물 대조로 잡아낸 결함.
-        # max_move 5: 참조 악보의 코드 전환 이동이 최대 5프렛이다(E1→A6).
-        # 같은 현 페달 문법에서는 이동이 코드 전환에만 생기고 페달 중엔 0이라,
-        # 3으로 조이면 참조 포지션이 불변식과 충돌한다.
-        keep_anchors=True, max_fret=9, max_move=5,
+        # max_move 7: 참조 악보의 실측 이동 상한이다 — Cm(E현8)→Fm(E현1)이
+        # 같은 현에서 7프렛을 내려간다. 포지션 시프트는 초보 문법에 포함된다.
+        keep_anchors=True, max_fret=9, max_move=7,
         fretting_weights={
-            "w_move": 0.15, "w_string_change": 0.8, "w_thin_string": 0.1,
+            # 참조 초급판의 운지 문법 = "직전 현을 유지할 수 있으면 유지한다"
+            # (A♭ E4 → C E8 → F E1 / E♭ A6 → D♭ A4). 현 이동 벌점을 프렛
+            # 이동보다 압도적으로 크게 두면 그 문법이 그대로 나온다 — 현
+            # 유지가 불가능할 때만(프렛 상한 밖) 인접 현으로 옮긴다.
+            "w_move": 0.15, "w_string_change": 3.0, "w_thin_string": 0.1,
         },
     ),
     INTERMEDIATE: LevelProfile(
@@ -388,14 +391,12 @@ def reduce_score(
             # Am7♭5→A♭dim7)에서 마디당 근음 하나로 페달하면 뒤 코드가
             # 사라진다. 참조 악보 초급판이 실제로 반마디에 근음을 바꾼다.
             front, back = half_bar_roots(bar)
-            # 반마디 가드 — 뒤 절반 근음이 앞 근음의 **반음 이웃**이면서
-            # 코드 비구성음이고 조성 비다이어토닉이면 검출 반음 오차로 보고
-            # 앞 근음으로 통일한다. 세 조건을 다 걸어야 진짜 반마디 화성이
-            # 산다: 예뻤어 A→A♭(A♭dim7)은 A♭이 E♭장조 다이어토닉이라 통과,
-            # 드라우닝 C→B(관성이 증식시킨 오검출)는 셋 다 걸려 교정된다.
-            if (front is not None and back is not None
-                    and front % 12 != back % 12
-                    and min((front - back) % 12, (back - front) % 12) == 1):
+            # 반마디 가드 — 뒤 절반 근음이 **코드 비구성음이고 조성
+            # 비다이어토닉**이면 검출 오차로 보고 앞 근음으로 통일한다.
+            # 두 조건을 다 걸어야 진짜 반마디 화성이 산다: 예뻤어 A→A♭
+            # (A♭dim7)은 A♭이 E♭장조 다이어토닉이라 통과하고, 드라우닝
+            # C→B·A♭→B(관성이 증식시킨 오검출)는 둘 다 걸려 교정된다.
+            if front is not None and back is not None and front % 12 != back % 12:
                 tones = chord_tones.get(bar.index) if chord_tones else None
                 out_chord = tones is not None and back % 12 not in tones
                 out_key = (diatonic_pcs is not None
