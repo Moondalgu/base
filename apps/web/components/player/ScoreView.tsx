@@ -11,6 +11,7 @@ import {
 // 단계 번호는 한 곳에서만 정의한다. 여기에 따로 두었다가 3단계로 재편할 때
 // 갱신을 놓쳐, 원본을 보고 있는데 "쉬운 버전" 배너가 뜨는 버그가 있었다.
 import { ORIGINAL_LEVEL } from "./ScoreControls";
+import { BADGE, BADGE_ACCENT, HINT } from "../ui";
 
 /**
  * 부모(PlayerShell)가 재생/정지를 alphaTab 경유로 걸 수 있게 하는 핸들.
@@ -356,46 +357,69 @@ export default function ScoreView({
   const isReduced = level < ORIGINAL_LEVEL;
 
   return (
-    <section className="space-y-3">
-      {qualityLevel === "reference" && (
-        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-          자동 생성된 악보입니다. 부정확할 수 있어요.
-        </p>
-      )}
+    <section className="space-y-2">
+      {/*
+        악보에 붙는 단서는 전부 이 한 줄에 모은다. 예전처럼 배너를 세로로 쌓으면
+        악보가 그만큼 아래로 밀리는데, 정작 읽어야 하는 것은 악보다. 긴 설명은
+        꼬리표의 title로 접어 넣었다.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {qualityLevel === "reference" && (
+            <span className={BADGE_ACCENT} title="자동 생성된 악보입니다. 부정확할 수 있어요.">
+              참고용
+            </span>
+          )}
+          {isReduced && (
+            <span
+              className={BADGE_ACCENT}
+              title="쉬운 버전입니다. 원곡을 단순하게 고쳐 적었으므로 원곡과 다릅니다."
+            >
+              쉬운 버전
+            </span>
+          )}
+          {meta && meta.octaveFolded > 0 && (
+            <span
+              className={BADGE}
+              title={`키를 옮기면서 ${meta.octaveFolded}개 음이 4현 음역을 벗어나 옥타브를 올려 적었습니다.`}
+            >
+              {`옥타브 올림 ${meta.octaveFolded}`}
+            </span>
+          )}
+          {status === "ready" && (
+            <span
+              className={`${BADGE} ${HINT}`}
+              title="슬랩·고스트노트 등 주법은 표기되지 않습니다. 음정과 리듬만 담겨 있어요."
+            >
+              주법 미표기
+            </span>
+          )}
+        </div>
 
-      {isReduced && (
-        <p className="rounded border border-sky-300 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200">
-          쉬운 버전입니다. 원곡을 단순하게 고쳐 적었으므로 원곡과 다릅니다.
-        </p>
-      )}
-
-      {meta && meta.octaveFolded > 0 && (
-        <p className="text-xs text-neutral-500">
-          {`키를 옮기면서 ${meta.octaveFolded}개 음이 4현 음역을 벗어나 옥타브를 올려 적었습니다.`}
-        </p>
-      )}
-
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-neutral-600 dark:text-neutral-400">보기</span>
-        {(
-          [
-            { key: "continuous", label: "전체 악보" },
-            { key: "paged", label: `${PAGE_BARS}마디 자동 넘김` },
-          ] as const
-        ).map((v) => (
-          <button
-            key={v.key}
-            onClick={() => setViewMode(v.key)}
-            className={`rounded px-2 py-1 text-xs transition ${
-              viewMode === v.key
-                ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300"
-            }`}
-            aria-pressed={viewMode === v.key}
-          >
-            {v.label}
-          </button>
-        ))}
+        <div className="flex items-center gap-2">
+          <span className="hidden text-xs text-neutral-500 sm:inline dark:text-neutral-400">보기</span>
+          <div className="inline-flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-neutral-800">
+            {(
+              [
+                { key: "continuous", label: "전체 악보" },
+                { key: "paged", label: `${PAGE_BARS}마디 자동 넘김` },
+              ] as const
+            ).map((v) => (
+              <button
+                key={v.key}
+                onClick={() => setViewMode(v.key)}
+                className={`rounded-md px-2.5 py-1 text-xs transition ${
+                  viewMode === v.key
+                    ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                    : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                }`}
+                aria-pressed={viewMode === v.key}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {status === "loading" && <p className="text-sm text-neutral-500">악보를 그리는 중…</p>}
@@ -412,7 +436,7 @@ export default function ScoreView({
       {status === "error" && (
         <div className="space-y-2">
           <p className="text-sm text-red-600">악보를 표시하지 못했습니다.</p>
-          <pre className="overflow-x-auto rounded bg-neutral-100 p-3 text-xs dark:bg-neutral-900">
+          <pre className="overflow-x-auto rounded-lg bg-neutral-100 p-3 text-xs dark:bg-neutral-900">
             {error}
           </pre>
         </div>
@@ -423,21 +447,20 @@ export default function ScoreView({
         (AlphaTab skipped rendering because of width=0), status는 renderFinished에서만
         ready가 되므로 서로를 기다리는 교착이 생긴다.
         항상 자리를 잡아두고 준비 전에는 투명도만 낮춘다.
+
+        높이를 뷰포트 기준으로 둔 이유는 악보가 화면의 주인공이기 때문이다.
+        고정 560px은 큰 화면에서 아래를 비워두고 작은 화면에서는 넘친다.
+        배경이 항상 흰색인 것은 alphaTab이 검은 잉크로 그리기 때문이다 —
+        다크 모드에서도 종이는 종이다.
       */}
       <div
-        className={`max-h-[560px] overflow-auto rounded border border-neutral-200 bg-white transition-opacity dark:border-neutral-800 ${
+        className={`max-h-[70vh] overflow-auto rounded-xl border border-neutral-200 bg-white shadow-sm transition-opacity dark:border-neutral-800 ${
           status === "ready" ? "opacity-100" : "opacity-0"
         }`}
         style={{ minHeight: status === "ready" ? undefined : 1 }}
       >
         <div ref={hostRef} />
       </div>
-
-      {status === "ready" && (
-        <p className="text-xs text-neutral-500">
-          슬랩·고스트노트 등 주법은 표기되지 않습니다. 음정과 리듬만 담겨 있어요.
-        </p>
-      )}
     </section>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CARD, FIELD_LABEL, chip } from "@/components/ui";
 
 const WORKER = process.env.NEXT_PUBLIC_WORKER_URL ?? "http://localhost:8000";
 
@@ -142,11 +143,9 @@ export default function JobRunner() {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        <label className="block text-sm text-neutral-600 dark:text-neutral-400">
-          유튜브 링크
-        </label>
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <label className={`${FIELD_LABEL} block`}>유튜브 링크</label>
         <div className="flex gap-2">
           <input
             type="url"
@@ -154,22 +153,20 @@ export default function JobRunner() {
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://www.youtube.com/watch?v=..."
             disabled={running}
-            className="flex-1 rounded border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none transition focus:border-amber-400 dark:border-neutral-700 dark:bg-neutral-900"
           />
           <button
             onClick={() => start({ kind: "url" })}
             disabled={running || !url}
-            className="rounded bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-40 dark:bg-white dark:text-neutral-900"
+            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white transition hover:opacity-85 disabled:opacity-40 dark:bg-white dark:text-neutral-900"
           >
             분석
           </button>
         </div>
       </div>
 
-      <div className="space-y-3">
-        <label className="block text-sm text-neutral-600 dark:text-neutral-400">
-          또는 오디오 파일
-        </label>
+      <div className="space-y-2">
+        <label className={`${FIELD_LABEL} block`}>또는 오디오 파일</label>
         <input
           ref={fileRef}
           type="file"
@@ -179,12 +176,12 @@ export default function JobRunner() {
             const file = e.target.files?.[0];
             if (file) start({ kind: "file", file });
           }}
-          className="w-full text-sm text-neutral-600 file:mr-3 file:rounded file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 file:text-sm dark:text-neutral-400 dark:file:bg-neutral-800"
+          className="w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 file:text-sm dark:text-neutral-400 dark:file:bg-neutral-800"
         />
       </div>
 
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-neutral-600 dark:text-neutral-400">튜닝</span>
+      <div className="flex items-center gap-1.5">
+        <span className={`${FIELD_LABEL} mr-1`}>튜닝</span>
         {[
           { key: "standard", label: "표준 (E A D G)" },
           { key: "dropD", label: "Drop D" },
@@ -193,11 +190,7 @@ export default function JobRunner() {
             key={t.key}
             onClick={() => setTuning(t.key)}
             disabled={running}
-            className={`rounded px-3 py-1 text-xs ${
-              tuning === t.key
-                ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                : "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-            }`}
+            className={chip(tuning === t.key)}
           >
             {t.label}
           </button>
@@ -205,10 +198,10 @@ export default function JobRunner() {
       </div>
 
       {running && (
-        <div className="space-y-3 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-          <div className="h-1.5 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
+        <div className={`${CARD} space-y-3 p-4`}>
+          <div className="h-1.5 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
             <div
-              className="h-full bg-neutral-900 transition-all dark:bg-white"
+              className="h-full bg-amber-500 transition-all"
               style={{ width: `${Math.round(progress * 100)}%` }}
             />
           </div>

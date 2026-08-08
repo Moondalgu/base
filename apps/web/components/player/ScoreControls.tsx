@@ -1,7 +1,22 @@
 "use client";
 
+import {
+  BADGE,
+  BADGE_ACCENT,
+  CARD,
+  CHEVRON,
+  FIELD_LABEL,
+  HINT,
+  OUTLINE_BTN,
+  PANEL_BODY,
+  PANEL_SUMMARY,
+  SLIDER,
+  STEPPER,
+  chip,
+} from "../ui";
+
 /**
- * 난이도·키 조절.
+ * 난이도·키·튜닝·내보내기.
  *
  * 두 가지 원칙이 UI에 박혀 있다.
  *
@@ -12,6 +27,10 @@
  *
  * 키를 내릴 때는 이조 대신 **튜닝 내리기**를 먼저 제안한다. 반음 내림 튜닝은
  * 운지가 그대로 유지되므로 다시 배울 것이 없다 — 실제 연주자가 쓰는 방법이다.
+ *
+ * 전체를 접이식 패널에 담고 접힌 상태에서도 현재 값(난이도·키·튜닝)이 제목
+ * 줄에 남게 했다. 한 번 정하면 곡이 끝날 때까지 안 만지는 값들이라 펼쳐 두면
+ * 악보 자리만 먹는데, 지금 무엇으로 보고 있는지는 항상 알아야 한다.
  */
 
 export interface LevelInfo {
@@ -33,6 +52,17 @@ export const ORIGINAL_LEVEL = 3;
 export const TRANSPOSE_LIMIT = 6;
 /** 이 이상 옮기면 소리가 눈에 띄게 상한다. */
 const TRANSPOSE_WARN = 3;
+
+const TUNINGS = [
+  { key: "standard", label: "표준 EADG" },
+  { key: "halfStepDown", label: "반음 내림" },
+  { key: "dropD", label: "드롭 D" },
+];
+
+const EXPORTS = [
+  { fmt: "musicxml", label: "MusicXML", hint: "MuseScore·Guitar Pro (TAB 유지)" },
+  { fmt: "mid", label: "MIDI", hint: "DAW (음정·리듬만)" },
+];
 
 /**
  * 음량 게이트 결과. 두 연주가 섞인 입력이면 게이트가 걸리고, 그래도 정렬이
@@ -102,41 +132,172 @@ export default function ScoreControls({
   const rhythmUntrusted = Boolean(gate?.applied) && (gate?.gridAfter ?? 1) < TRUSTED_GRID_RATIO;
   const levelUntrusted = rhythmUntrusted && level > MAX_TRUSTED_LEVEL_WHEN_MIXED;
 
+  const tuningLabel = TUNINGS.find((t) => t.key === tuning)?.label ?? tuning;
+  const exportHint =
+    "지금 화면의 난이도·키·튜닝 그대로 내려갑니다. 자동 채보는 완벽하지 않으니 MuseScore나 Guitar Pro에서 고쳐 쓰는 것을 전제로 두었습니다." +
+    (onPrint ? " 인쇄는 화면 뷰와 무관하게 전곡을 냅니다." : "");
+
   return (
-    <section className="space-y-4 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-      <div className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <span className="text-sm text-neutral-600 dark:text-neutral-400">난이도</span>
-          <span className="text-sm font-medium">
-            {current.name}
-            <span className="ml-2 text-xs font-normal text-neutral-500">{current.hint}</span>
-          </span>
+    <details open className={`group ${CARD}`}>
+      <summary className={PANEL_SUMMARY}>
+        <span className="mr-auto">악보 설정</span>
+        {/*
+          접었을 때 지금 무엇으로 보고 있는지가 남아야 한다. 난이도·키·튜닝은
+          악보의 내용을 바꾸는 값이라, 모르고 보면 원곡으로 착각한다.
+        */}
+        <span className="flex flex-wrap items-center justify-end gap-1.5">
+          {rhythmUntrusted && <span className={BADGE_ACCENT}>리듬 신뢰도 낮음</span>}
+          <span className={BADGE}>{current.name}</span>
+          {transpose !== 0 && (
+            <span className={BADGE}>{`키 ${transpose > 0 ? `+${transpose}` : transpose}`}</span>
+          )}
+          <span className={BADGE}>{tuningLabel}</span>
+        </span>
+        <span className={CHEVRON} aria-hidden>
+          ▾
+        </span>
+      </summary>
+
+      <div className={`grid gap-6 md:grid-cols-3 ${PANEL_BODY}`}>
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <span
+              className={`${FIELD_LABEL} ${HINT}`}
+              title="쉬운 쪽으로만 조절됩니다. 원곡보다 어렵게 만드는 것은 편곡이라 하지 않습니다."
+            >
+              난이도
+            </span>
+            <span className="text-sm font-medium">{current.name}</span>
+          </div>
+          <p className="text-xs text-neutral-500">{current.hint}</p>
+
+          {singleLevel ? (
+            <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+              {levelReason ?? "이 곡은 원곡이 이미 초급 수준이라 단계를 나누지 않았습니다."}
+            </p>
+          ) : (
+            <>
+              <input
+                type="range"
+                min={offered[0].level}
+                max={offered[offered.length - 1].level}
+                step={1}
+                value={level}
+                onChange={(e) => onLevel(Number(e.target.value))}
+                className={`${SLIDER} w-full`}
+                aria-label="난이도"
+              />
+              <div className="flex justify-between text-[11px] text-neutral-400">
+                {offered.map((l) => (
+                  <span key={l.level}>{l.name}</span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
-        {singleLevel ? (
-          <p className="rounded border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-            {levelReason ?? "이 곡은 원곡이 이미 초급 수준이라 단계를 나누지 않았습니다."}
-          </p>
-        ) : (
-          <>
-            <input
-              type="range"
-              min={offered[0].level}
-              max={offered[offered.length - 1].level}
-              step={1}
-              value={level}
-              onChange={(e) => onLevel(Number(e.target.value))}
-              className="h-1.5 w-full cursor-pointer accent-neutral-900 dark:accent-white"
-              aria-label="난이도"
-            />
-            <div className="flex justify-between text-xs text-neutral-400">
-              {offered.map((l) => (
-                <span key={l.level}>{l.name}</span>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <span
+              className={`${FIELD_LABEL} ${HINT} block`}
+              title={`재생 음정과 악보가 함께 바뀝니다. 최대 ±${TRANSPOSE_LIMIT}반음.`}
+            >
+              키
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => onTranspose(clamp(transpose - 1))}
+                disabled={transpose <= -TRANSPOSE_LIMIT}
+                className={STEPPER}
+                aria-label="키 내리기"
+              >
+                −
+              </button>
+              <span className="w-9 text-center font-mono text-xs tabular-nums text-neutral-500">
+                {transpose > 0 ? `+${transpose}` : transpose}
+              </span>
+              <button
+                onClick={() => onTranspose(clamp(transpose + 1))}
+                disabled={transpose >= TRANSPOSE_LIMIT}
+                className={STEPPER}
+                aria-label="키 올리기"
+              >
+                +
+              </button>
+              {transpose !== 0 && (
+                <button
+                  onClick={() => onTranspose(0)}
+                  className="rounded-md px-2 py-1 text-xs text-neutral-500 transition hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  원래 키로
+                </button>
+              )}
+            </div>
+            {Math.abs(transpose) >= TRANSPOSE_WARN && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {`${Math.abs(transpose)}반음은 소리가 상할 수 있습니다. 반음만 내릴 것이라면 튜닝을 내리는 쪽이 낫습니다.`}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <span
+              className={`${FIELD_LABEL} ${HINT} block`}
+              title="반음 내림 튜닝은 운지가 그대로라 다시 배울 것이 없습니다. 키를 반음 내리려면 이쪽이 낫습니다."
+            >
+              튜닝
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {TUNINGS.map((t) => (
+                <button key={t.key} onClick={() => onTuning(t.key)} className={chip(tuning === t.key)}>
+                  {t.label}
+                </button>
               ))}
             </div>
-            <p className="text-xs text-neutral-500">
-              쉬운 쪽으로만 조절됩니다. 원곡보다 어렵게 만드는 것은 편곡이라 하지 않습니다.
-            </p>
-          </>
+          </div>
+        </div>
+
+        {(contentHash || onPrint) && (
+          <div className="space-y-2">
+            <span className={`${FIELD_LABEL} ${HINT} block`} title={exportHint}>
+              내보내기
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {contentHash &&
+                EXPORTS.map((f) => (
+                  <a
+                    key={f.fmt}
+                    /*
+                      지금 화면에 보이는 것과 **같은** 난이도·이조·튜닝으로 받는다.
+                      다른 것이 내려가면 사용자가 알 방법이 없다.
+                    */
+                    href={`/api/exports/${contentHash}/${contentHash}.${f.fmt}?level=${level}&transpose=${transpose}&tuning=${tuning}`}
+                    className={OUTLINE_BTN}
+                    title={f.hint}
+                  >
+                    {f.label}
+                  </a>
+                ))}
+              {contentHash && (
+                <a
+                  href={`/api/scores/${contentHash}/ledger?level=${level}&transpose=${transpose}&tuning=${tuning}`}
+                  className={OUTLINE_BTN}
+                  title="음표별 배치 데이터 — 마디·슬롯·박 위치, 검출 시각→스냅, 피치 출처, 현·프렛"
+                >
+                  음표 원장 CSV
+                </a>
+              )}
+              {onPrint && (
+                <button
+                  onClick={onPrint}
+                  className={OUTLINE_BTN}
+                  title="브라우저 인쇄 창에서 'PDF로 저장'을 고르세요"
+                >
+                  인쇄/PDF
+                </button>
+              )}
+            </div>
+          </div>
         )}
 
         {/*
@@ -144,7 +305,7 @@ export default function ScoreControls({
           얘기를 두 번 하지 않는다 — 경고를 겹쳐 쌓으면 하나도 안 읽힌다.
         */}
         {rhythmUntrusted && !singleLevel && (
-          <div className="space-y-1 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 md:col-span-3 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
             {/*
               **원인을 단정하지 않는다.** 예전에는 "베이스가 둘 섞여 있습니다"라고
               적었는데, 공식 스튜디오 음원 세 곡에도 그 경고가 떴다. 격자 정렬이
@@ -163,118 +324,11 @@ export default function ScoreControls({
         )}
 
         {rhythmUntrusted && levelUntrusted && (
-          <p className="text-xs text-red-700 dark:text-red-400">
+          <p className="text-xs text-red-700 md:col-span-3 dark:text-red-400">
             이 악보의 <strong>리듬은 신뢰할 수 없습니다.</strong> 음정만 참고하세요.
           </p>
         )}
       </div>
-
-      <div className="space-y-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-neutral-600 dark:text-neutral-400">키</span>
-          <button
-            onClick={() => onTranspose(clamp(transpose - 1))}
-            disabled={transpose <= -TRANSPOSE_LIMIT}
-            className="h-7 w-7 rounded bg-neutral-200 text-sm hover:bg-neutral-300 disabled:opacity-40 dark:bg-neutral-800"
-            aria-label="키 내리기"
-          >
-            −
-          </button>
-          <span className="w-10 text-center font-mono text-xs tabular-nums text-neutral-500">
-            {transpose > 0 ? `+${transpose}` : transpose}
-          </span>
-          <button
-            onClick={() => onTranspose(clamp(transpose + 1))}
-            disabled={transpose >= TRANSPOSE_LIMIT}
-            className="h-7 w-7 rounded bg-neutral-200 text-sm hover:bg-neutral-300 disabled:opacity-40 dark:bg-neutral-800"
-            aria-label="키 올리기"
-          >
-            +
-          </button>
-          {transpose !== 0 && (
-            <button
-              onClick={() => onTranspose(0)}
-              className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            >
-              원래 키로
-            </button>
-          )}
-        </div>
-        <p className="text-xs text-neutral-500">
-          재생 음정과 악보가 함께 바뀝니다. 최대 ±{TRANSPOSE_LIMIT}반음.
-        </p>
-        {Math.abs(transpose) >= TRANSPOSE_WARN && (
-          <p className="text-xs text-amber-700 dark:text-amber-400">
-            {`${Math.abs(transpose)}반음은 소리가 상할 수 있습니다. 반음만 내릴 것이라면 튜닝을 내리는 쪽이 낫습니다.`}
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <span className="text-sm text-neutral-600 dark:text-neutral-400">튜닝</span>
-        <div className="flex flex-wrap gap-2">
-          {[
-            { key: "standard", label: "표준 EADG" },
-            { key: "halfStepDown", label: "반음 내림" },
-            { key: "dropD", label: "드롭 D" },
-          ].map((t) => (
-            <button
-              key={t.key}
-              onClick={() => onTuning(t.key)}
-              className={`rounded px-2 py-1 text-xs transition ${
-                tuning === t.key
-                  ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                  : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-neutral-500">
-          반음 내림 튜닝은 운지가 그대로라 다시 배울 것이 없습니다. 키를 반음 내리려면 이쪽이 낫습니다.
-        </p>
-      </div>
-
-      {(contentHash || onPrint) && (
-        <div className="space-y-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-          <span className="text-sm text-neutral-600 dark:text-neutral-400">내보내기</span>
-          <div className="flex flex-wrap gap-2">
-            {contentHash &&
-              [
-                { fmt: "musicxml", label: "MusicXML", hint: "MuseScore·Guitar Pro (TAB 유지)" },
-                { fmt: "mid", label: "MIDI", hint: "DAW (음정·리듬만)" },
-              ].map((f) => (
-                <a
-                  key={f.fmt}
-                  /*
-                    지금 화면에 보이는 것과 **같은** 난이도·이조·튜닝으로 받는다.
-                    다른 것이 내려가면 사용자가 알 방법이 없다.
-                  */
-                  href={`/api/exports/${contentHash}/${contentHash}.${f.fmt}?level=${level}&transpose=${transpose}&tuning=${tuning}`}
-                  className="rounded bg-neutral-200 px-2 py-1 text-xs text-neutral-700 transition hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-                  title={f.hint}
-                >
-                  {f.label}
-                </a>
-              ))}
-            {onPrint && (
-              <button
-                onClick={onPrint}
-                className="rounded bg-neutral-200 px-2 py-1 text-xs text-neutral-700 transition hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-                title="브라우저 인쇄 창에서 'PDF로 저장'을 고르세요"
-              >
-                인쇄/PDF
-              </button>
-            )}
-          </div>
-          <p className="text-xs text-neutral-500">
-            지금 화면의 난이도·키·튜닝 그대로 내려갑니다. 자동 채보는 완벽하지 않으니
-            MuseScore나 Guitar Pro에서 고쳐 쓰는 것을 전제로 두었습니다.
-            {onPrint && " 인쇄는 화면 뷰와 무관하게 전곡을 냅니다."}
-          </p>
-        </div>
-      )}
-    </section>
+    </details>
   );
 }

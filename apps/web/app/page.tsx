@@ -1,5 +1,6 @@
 import Link from "next/link";
 import JobRunner from "@/components/JobRunner";
+import { BADGE, CARD } from "@/components/ui";
 
 const WORKER = process.env.WORKER_URL ?? "http://localhost:8000";
 
@@ -34,16 +35,20 @@ export default async function Home() {
   const library = await loadLibrary();
 
   return (
-    <main className="mx-auto max-w-2xl space-y-12 px-6 py-12">
+    <main className="mx-auto max-w-3xl space-y-10 px-4 py-12 sm:px-6">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Lowend</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Lowend<span className="text-amber-500">.</span>
+        </h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           곡을 넣으면 베이스 라인을 자동으로 채보하고, 배속·악기별 볼륨·탭 악보가 되는
           연습 플레이어를 만들어 줍니다.
         </p>
       </header>
 
-      <JobRunner />
+      <div className={`${CARD} p-5`}>
+        <JobRunner />
+      </div>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
@@ -54,20 +59,22 @@ export default async function Home() {
             아직 없습니다. 위에 링크를 넣거나 파일을 올려보세요.
           </p>
         ) : (
-          <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
+          <ul className="space-y-2">
             {library.map((item) => (
               <li key={item.contentHash}>
                 <Link
                   href={`/play/${item.contentHash}`}
-                  className="flex items-center justify-between gap-4 py-3 transition hover:opacity-70"
+                  className={`${CARD} flex items-center justify-between gap-4 px-4 py-3 transition hover:border-amber-400 hover:bg-neutral-50 dark:hover:border-amber-500/50 dark:hover:bg-neutral-900`}
                 >
                   <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
-                  <span className="shrink-0 font-mono text-xs text-neutral-500">
-                    {item.bpm ? `${item.bpm}BPM` : ""}
-                    {item.barCount ? ` · ${item.barCount}마디` : ""}
-                    {item.quality?.level
-                      ? ` · ${LEVEL_LABEL[item.quality.level] ?? item.quality.level}`
-                      : ""}
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    {item.bpm ? <span className={BADGE}>{`${item.bpm} BPM`}</span> : null}
+                    {item.barCount ? <span className={BADGE}>{`${item.barCount}마디`}</span> : null}
+                    {item.quality?.level ? (
+                      <span className={BADGE}>
+                        {LEVEL_LABEL[item.quality.level] ?? item.quality.level}
+                      </span>
+                    ) : null}
                   </span>
                 </Link>
               </li>

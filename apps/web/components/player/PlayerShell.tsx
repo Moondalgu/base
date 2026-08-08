@@ -15,6 +15,7 @@ import ScoreControls, { ORIGINAL_LEVEL, TRANSPOSE_LIMIT } from "./ScoreControls"
 import ScoreView, { type ScoreControl } from "./ScoreView";
 import StemMixer from "./StemMixer";
 import TransportBar from "./TransportBar";
+import { BADGE } from "../ui";
 
 interface Manifest {
   source?: { title?: string; durationSec?: number };
@@ -268,7 +269,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
     return (
       <div className="space-y-2">
         <p className="text-sm text-red-600">스템을 불러오지 못했습니다.</p>
-        <pre className="overflow-x-auto rounded bg-neutral-100 p-3 text-xs dark:bg-neutral-900">
+        <pre className="overflow-x-auto rounded-lg bg-neutral-100 p-3 text-xs dark:bg-neutral-900">
           {error}
         </pre>
         <p className="text-xs text-neutral-500">
@@ -278,64 +279,32 @@ export default function PlayerShell({ hash }: { hash: string }) {
     );
   }
 
+  /*
+    화면 순서는 "곡 정보 → 악보 → 설정"이다. 연습 중에 계속 보는 것은 악보
+    하나뿐이라 첫 화면에 악보가 들어와야 하고, 난이도·키·볼륨은 한 번 정하면
+    잘 안 만지는 값이라 아래로 내려 접어 두었다.
+
+    재생 컨트롤만 아래 고정 바로 뺐다 — 악보를 스크롤하는 동안에도 손이 닿아야
+    하는 것은 그것뿐이다. 아래 여백은 그 바가 가리는 만큼인데, 좁은 화면에서는
+    바가 두세 줄로 접히므로 더 준다.
+  */
   return (
-    <div className="space-y-8">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold">
+    <div className="pb-48 sm:pb-40 lg:pb-32">
+      <header className="mb-4 space-y-2">
+        <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
           {manifest?.source?.title ?? hash}
         </h1>
-        <p className="text-sm text-neutral-500">
-          {manifest?.tempo?.medianBpm ? `${manifest.tempo.medianBpm} BPM` : null}
-          {manifest?.timeSignature ? ` · ${manifest.timeSignature.join("/")}` : null}
-          {manifest?.barCount ? ` · ${manifest.barCount}마디` : null}
-          {manifest?.noteCount ? ` · ${manifest.noteCount}음` : null}
-        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {manifest?.tempo?.medianBpm ? (
+            <span className={BADGE}>{`${manifest.tempo.medianBpm} BPM`}</span>
+          ) : null}
+          {manifest?.timeSignature ? (
+            <span className={BADGE}>{manifest.timeSignature.join("/")}</span>
+          ) : null}
+          {manifest?.barCount ? <span className={BADGE}>{`${manifest.barCount}마디`}</span> : null}
+          {manifest?.noteCount ? <span className={BADGE}>{`${manifest.noteCount}음`}</span> : null}
+        </div>
       </header>
-
-      <TransportBar
-        playing={playing}
-        position={position}
-        duration={duration}
-        rate={rate}
-        semitones={semitones}
-        loopStart={loopStart}
-        loopEnd={loopEnd}
-        metronome={metronome}
-        metronomeAvailable={Boolean(beatGrid)}
-        onToggle={toggle}
-        onSeek={handleSeek}
-        onRate={handleRate}
-        onSemitones={handleSemitones}
-        onLoopA={() => markLoop("a")}
-        onLoopB={() => markLoop("b")}
-        onMetronome={toggleMetronome}
-      />
-
-      <ScoreControls
-        contentHash={hash}
-        level={level}
-        transpose={semitones}
-        tuning={tuning}
-        gate={manifest?.loudnessGate}
-        levels={manifest?.scoreVariants?.levels}
-        /*
-          단계를 없앤 이유를 그대로 보여준다. "원곡이 이미 쉽다"와 "리듬 검출을
-          믿을 수 없다"는 완전히 다른 얘기이고, 후자는 사용자가 취할 행동
-          (원곡 음원을 넣어 본다)이 있다.
-
-          **`practiceVideo`를 보지 않는다.** 그 판정은 버렸다 — 공식 스튜디오
-          음원 세 곡을 전부 "베이스가 둘 섞였다"고 단정했던 자리다.
-        */
-        levelReason={
-          manifest?.inputDiagnosis?.rhythmConfident === false
-            ? manifest.inputDiagnosis.reason
-            : manifest?.originalDifficulty?.reason
-        }
-        onLevel={setLevel}
-        onTranspose={handleSemitones}
-        onTuning={setTuning}
-        onPrint={scoreReady ? () => scoreControlRef.current?.print() : undefined}
-      />
 
       <ScoreView
         hash={hash}
@@ -362,11 +331,58 @@ export default function PlayerShell({ hash }: { hash: string }) {
         }}
       />
 
-      <StemMixer
-        gains={gains}
-        onGainChange={handleGain}
-        onPreset={handlePreset}
-        activePreset={activePreset}
+      <div className="mt-4 space-y-3">
+        <ScoreControls
+          contentHash={hash}
+          level={level}
+          transpose={semitones}
+          tuning={tuning}
+          gate={manifest?.loudnessGate}
+          levels={manifest?.scoreVariants?.levels}
+          /*
+            단계를 없앤 이유를 그대로 보여준다. "원곡이 이미 쉽다"와 "리듬 검출을
+            믿을 수 없다"는 완전히 다른 얘기이고, 후자는 사용자가 취할 행동
+            (원곡 음원을 넣어 본다)이 있다.
+
+            **`practiceVideo`를 보지 않는다.** 그 판정은 버렸다 — 공식 스튜디오
+            음원 세 곡을 전부 "베이스가 둘 섞였다"고 단정했던 자리다.
+          */
+          levelReason={
+            manifest?.inputDiagnosis?.rhythmConfident === false
+              ? manifest.inputDiagnosis.reason
+              : manifest?.originalDifficulty?.reason
+          }
+          onLevel={setLevel}
+          onTranspose={handleSemitones}
+          onTuning={setTuning}
+          onPrint={scoreReady ? () => scoreControlRef.current?.print() : undefined}
+        />
+
+        <StemMixer
+          gains={gains}
+          onGainChange={handleGain}
+          onPreset={handlePreset}
+          activePreset={activePreset}
+        />
+      </div>
+
+      <TransportBar
+        playing={playing}
+        position={position}
+        duration={duration}
+        rate={rate}
+        semitones={semitones}
+        loopStart={loopStart}
+        loopEnd={loopEnd}
+        metronome={metronome}
+        metronomeAvailable={Boolean(beatGrid)}
+        onToggle={toggle}
+        onSeek={handleSeek}
+        onRate={handleRate}
+        onSemitones={handleSemitones}
+        onLoopA={() => markLoop("a")}
+        onLoopB={() => markLoop("b")}
+        onMetronome={toggleMetronome}
       />
     </div>
   );
