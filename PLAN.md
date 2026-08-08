@@ -1119,3 +1119,13 @@ alphaTab beatMouseDown은 x 기반(스태프는 포인터 y로 직접 판별).
 잔여: 92마디 Cm(수용), 보컬 리듬 성글음(수용), "사" 음절 누락(보컬 음 부족),
 예뻤어 정밀 채점(이월). 83마디는 에디터 음 추가로 참조와 같은 C 페달로 복구
 (테스트 겸 실개선 — edits.json에 1건 남아 있음).
+
+## 2026-08-09 밤 — 정답 우선 로직 2종 (a364720 이후)
+
+1) 가사 정답 1순위: fetch_full_lyrics(Gemini 전문 회상, UNKNOWN 강제) →
+apply_known_lyrics(difflib 정렬, 등길이 replace만 치환, 일치율<0.5 불신).
+예뻤어 실증(0.77, 10치환), 드라우닝 UNKNOWN 폴백.
+2) 참조 악보 캐시 적재 + 자동 대조: ingest_reference.py → reference.json,
+compare_reference.py(근음 DP 정렬) → 드라우닝 근음 96%·운지 97%, 실질 0.
+다음: **악보 업로드→매칭 재생** — 업로드 UI + reference→alphaTex 표시 +
+DP 매핑으로 인디케이터(반나절 추정). 판독 흔들림 대비 2회 판독 다수결 옵션.
