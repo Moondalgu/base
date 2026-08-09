@@ -95,12 +95,61 @@ def _parse_json(text: str) -> dict:
     return json.loads(text[text.index("{"):text.rindex("}") + 1])
 
 
-def ingest_images(image_paths: list[Path], workdir: Path, *, verbose: bool = False) -> dict:
+def _read_page(img: Path, prompt: str, key: str, *, verbose: bool) -> dict | None:
+    for model in GEMINI_MODELS:
+        try:
+            got = _parse_json(_analyze_image(img, prompt, model, key))
+            got["_source_image"] = img.name
+            got["_model"] = model
+            return got
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                print(f"[reference] {img.name} {model} 실패: {exc}")
+    return None
+
+
+def _tab_sig(bar: dict) -> str:
+    return " ".join(f"{t.get('string')}{t.get('fret')}" for t in (bar.get("tab") or []))
+
+
+def _merge_votes(a: dict, b: dict, *, verbose: bool) -> dict:
+    """같은 페이지 2회 판독을 마디 단위로 합친다.
+
+    TAB이 일치하면 그대로, 다르면 **첫 온셋 피치가 그 마디 코드의 베이스
+    음과 일치하는 판**을 고른다 — 판독 흔들림의 전형이 '숫자는 맞고 현을
+    한 줄 헷갈림'이라(실측: E현3(G)을 A현3(C)으로) 화성이 심판이 된다.
+    둘 다 판정 불가면 1판을 둔다.
+    """
+    bars_b = {bar.get("bar"): bar for bar in b.get("bars", [])}
+    fixed = 0
+    for bar in a.get("bars", []):
+        other = bars_b.get(bar.get("bar"))
+        if not other or _tab_sig(bar) == _tab_sig(other):
+            continue
+        chords = bar.get("chords") or other.get("chords") or []
+        want = chord_root_pc(chords[0]) if chords else None
+        if want is None:
+            continue
+        pc_a, pc_b = _tab_root_pc(bar), _tab_root_pc(other)
+        if pc_a != want and pc_b == want:
+            bar["tab"] = other.get("tab")
+            fixed += 1
+    if verbose and fixed:
+        print(f"[reference] 다수결: {a.get('_source_image')} {fixed}마디를 "
+              f"화성 기준으로 교체")
+    return a
+
+
+def ingest_images(image_paths: list[Path], workdir: Path, *,
+                  votes: int = 1, verbose: bool = False) -> dict:
     """악보 이미지들을 판독해 reference.json으로 적재한다. 반환 = 적재 결과.
 
     페이지 순서는 호출자가 준 순서다(첫 마디 번호로 재정렬하므로 뒤섞여도
     된다). 판독 실패 페이지는 건너뛰고 남은 것으로 만든다 — 부분 악보도
     없는 것보다 낫다(못 읽은 페이지는 결과에 명시).
+
+    votes=2면 페이지를 두 번 읽어 어긋난 마디를 화성 기준으로 고른다
+    (_merge_votes). 시간·비용이 두 배라 CLI 재적재용이다.
     """
     key = _gemini_key()
     if not key:
@@ -109,16 +158,11 @@ def ingest_images(image_paths: list[Path], workdir: Path, *, verbose: bool = Fal
 
     pages, failed = [], []
     for img in image_paths:
-        got = None
-        for model in GEMINI_MODELS:
-            try:
-                got = _parse_json(_analyze_image(img, prompt, model, key))
-                got["_source_image"] = img.name
-                got["_model"] = model
-                break
-            except Exception as exc:  # noqa: BLE001
-                if verbose:
-                    print(f"[reference] {img.name} {model} 실패: {exc}")
+        got = _read_page(img, prompt, key, verbose=verbose)
+        if got is not None and votes >= 2:
+            second = _read_page(img, prompt, key, verbose=verbose)
+            if second is not None:
+                got = _merge_votes(got, second, verbose=verbose)
         if got is None:
             failed.append(img.name)
         else:
@@ -153,12 +197,18 @@ def ingest_images(image_paths: list[Path], workdir: Path, *, verbose: bool = Fal
 # ─── 오디오 마디 매핑 (근음 DP 정렬) ────────────────────────────────────────
 
 def chord_root_pc(symbol: str) -> int | None:
+    """코드 심볼에서 **베이스 음** 피치클래스. 슬래시 코드(Eb/G)는 슬래시
+    뒤(G)가 실제 베이스 음이다 — 베이스 채보와 대조하는 값이므로 루트가
+    아니라 베이스 음을 쓴다(실측: 예뻤어 Eb/G 구간이 전부 가짜 어긋남)."""
     if not symbol:
         return None
-    head = symbol.split("/")[0].strip()
-    for ln in (2, 1):
-        if head[:ln] in PC:
-            return PC[head[:ln]]
+    parts = symbol.split("/")
+    # 뒤에서부터 — 슬래시 베이스가 있으면 그것, 없으면 루트
+    for cand in reversed(parts):
+        cand = cand.strip()
+        for ln in (2, 1):
+            if cand[:ln] in PC:
+                return PC[cand[:ln]]
     return None
 
 
@@ -265,7 +315,25 @@ def align_bars(ref: dict, our_roots: list[int | None]) -> list[int | None]:
 
 # ─── 표시용 alphaTex (오디오 마디 순서로 펼침) ──────────────────────────────
 
-def _bar_tokens(bar: dict | None, beats_per_bar: int) -> str:
+PITCH_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+
+
+def _transpose_chord(symbol: str, semitones: int) -> str:
+    """코드 심볼 이조 — 루트·슬래시 베이스의 음이름만 옮기고 서픽스는 유지."""
+    if not symbol or semitones == 0:
+        return symbol
+
+    def move(part: str) -> str:
+        for ln in (2, 1):
+            head = part[:ln]
+            if head in PC:
+                return PITCH_NAMES[(PC[head] + semitones) % 12] + part[ln:]
+        return part
+
+    return "/".join(move(p.strip()) for p in symbol.split("/"))
+
+
+def _bar_tokens(bar: dict | None, beats_per_bar: int, transpose: int = 0) -> str:
     """참조 마디 하나 → alphaTex 토큰. 온셋을 균등 배치한다."""
     if bar is None:
         return "r.1"
@@ -275,7 +343,13 @@ def _bar_tokens(bar: dict | None, beats_per_bar: int) -> str:
         s = _STRING_NO.get(str(t.get("string", "")).upper())
         f = t.get("fret")
         if s is not None and isinstance(f, int) and 0 <= f <= 24:
-            onsets.append((f, s))
+            # 이조 — 같은 현에서 프렛만 옮긴다. 지판을 벗어나면 옥타브 접기.
+            f2 = f + transpose
+            while f2 < 0:
+                f2 += 12
+            while f2 > 24:
+                f2 -= 12
+            onsets.append((f2, s))
     if not onsets:
         return "r.1"
     n = len(onsets)
@@ -302,11 +376,60 @@ def _with_chord(token_line: str, chord: str | None) -> str:
     return " ".join([head] + rest)
 
 
-def build_tex(ref: dict, qscore, mapping: list[int | None], title: str) -> str:
-    """참조 악보를 오디오 마디 순서로 펼친 alphaTex."""
+_OPEN_MIDI = {"E": 28, "A": 33, "D": 38, "G": 43}
+
+
+def events(ref: dict, qscore, mapping: list[int | None], transpose: int = 0) -> list[dict]:
+    """악보 연주 이벤트 [{t,d,midi,v}] — 내 악보 모드의 샘플러가 쓴다.
+
+    build_tex와 같은 균등 배치 규칙으로 시각을 계산한다 — 보이는 악보와
+    들리는 소리가 같아야 한다(perform.py와 같은 원칙).
+    """
+    out: list[dict] = []
+    for i, qbar in enumerate(qscore.bars):
+        ri = mapping[i] if i < len(mapping) else None
+        rb = ref["bars"][ri] if ri is not None else None
+        if rb is None:
+            continue
+        onsets = []
+        for t in (rb.get("tab") or []):
+            open_midi = _OPEN_MIDI.get(str(t.get("string", "")).upper())
+            f = t.get("fret")
+            if open_midi is not None and isinstance(f, int) and 0 <= f <= 24:
+                onsets.append(open_midi + f + transpose)
+        if not onsets:
+            continue
+        n = len(onsets)
+        for slots in (qbar.beats_per_bar, qbar.beats_per_bar * 2,
+                      qbar.beats_per_bar * 4):
+            if n <= slots:
+                break
+        else:
+            slots = qbar.beats_per_bar * 4
+            onsets = onsets[:slots]
+        bar_len = qbar.end_sec - qbar.start_sec
+        step = bar_len / slots
+        for k, midi in enumerate(onsets):
+            out.append({
+                "t": round(qbar.start_sec + k * step, 4),
+                "d": round(step, 4),
+                "midi": midi,
+                "v": 0.85,
+            })
+    return out
+
+
+def build_tex(ref: dict, qscore, mapping: list[int | None], title: str,
+              transpose: int = 0) -> str:
+    """참조 악보를 오디오 마디 순서로 펼친 alphaTex.
+
+    transpose는 재생 피치와 같은 값이어야 한다 — 소리만 올라가고 악보가
+    그대로면 "키 기능이 안 된다"로 보인다(사용자 실물 신고). 이조 시
+    조표는 뗀다(원 조표가 더는 맞지 않는다 — 임시표로 그리는 편이 정직).
+    """
     lines = [f'\\title "{title.replace(chr(34), chr(39))}"',
              f"\\tempo {qscore.median_bpm:.0f}"]
-    ks = ref.get("keySignature")
+    ks = ref.get("keySignature") if transpose == 0 else None
     if ks:
         lines.append(f"\\ks {ks}")
     lines.append(".")
@@ -323,12 +446,12 @@ def build_tex(ref: dict, qscore, mapping: list[int | None], title: str) -> str:
     for i in range(len(qscore.bars)):
         ri = mapping[i] if i < len(mapping) else None
         rb = ref["bars"][ri] if ri is not None else None
-        text = _bar_tokens(rb, qscore.beats_per_bar)
+        text = _bar_tokens(rb, qscore.beats_per_bar, transpose)
         chord = None
         if rb:
             chords = rb.get("chords") or []
             if chords and chords[0] != last_chord:
-                chord = chords[0]
+                chord = _transpose_chord(chords[0], transpose)
                 last_chord = chords[0]
         bar_texts.append(_with_chord(text, chord) if text != "r.1" else text)
     lines.append(" |\n".join(bar_texts))

@@ -10,14 +10,16 @@ import { NextRequest } from "next/server";
 const WORKER = process.env.WORKER_URL ?? "http://localhost:8000";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ hash: string }> },
 ) {
   const { hash } = await context.params;
+  const transpose = request.nextUrl.searchParams.get("transpose") ?? "0";
   try {
-    const upstream = await fetch(`${WORKER}/api/scores/${hash}/reference-tex`, {
-      cache: "no-store",
-    });
+    const upstream = await fetch(
+      `${WORKER}/api/scores/${hash}/reference-tex?transpose=${transpose}`,
+      { cache: "no-store" },
+    );
     const headers = new Headers({
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",

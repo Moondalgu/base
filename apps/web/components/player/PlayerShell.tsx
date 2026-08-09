@@ -89,6 +89,8 @@ export default function PlayerShell({ hash }: { hash: string }) {
   const bassBeforeSynth = useRef(1);
   // 사용자 보정이 저장될 때마다 +1 — 악보·연주 이벤트가 같은 판을 다시 받는다.
   const [editsVersion, setEditsVersion] = useState(0);
+  // 악보 소스(자동/내 악보) — 악보 연주(신스)가 보이는 악보의 음을 내야 한다.
+  const [scoreSource, setScoreSource] = useState<"auto" | "reference">("auto");
 
   // 유튜브 제목의 "X (X)" 중복 괄호를 접는다 — 워커(jobs.clean_title)와 같은 규칙.
   const cleanTitle = (t: string) => {
@@ -254,6 +256,22 @@ export default function PlayerShell({ hash }: { hash: string }) {
     [beatGrid, loopStart, loopEnd],
   );
 
+  /** 악보 드래그로 잡은 마디 구간(0-based, 양끝 포함) → A-B 반복 */
+  const handleDragLoop = useCallback(
+    (startBar: number, endBar: number) => {
+      const player = playerRef.current;
+      const downs = beatGrid?.downbeats;
+      if (!player || !downs?.length) return;
+      const a = downs[Math.min(startBar, downs.length - 1)];
+      const b = endBar + 1 < downs.length ? downs[endBar + 1] : player.duration;
+      if (a === undefined || b === undefined || b <= a) return;
+      setLoopStart(a);
+      setLoopEnd(b);
+      player.setLoop(a, b);
+    },
+    [beatGrid],
+  );
+
   const toggleMetronome = useCallback(() => {
     const player = playerRef.current;
     if (!player) return;
@@ -318,6 +336,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
           transpose: String(semitones),
         });
         if (tuning && tuning !== "standard") query.set("tuning", tuning);
+        if (scoreSource === "reference") query.set("source", "reference");
         const res = await fetch(`/api/scores/${hash}/synth-notes?${query}`);
         if (!res.ok) return;
         const data = await res.json();
@@ -329,7 +348,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
     return () => {
       stale = true;
     };
-  }, [synthOn, hash, level, semitones, tuning, editsVersion]);
+  }, [synthOn, hash, level, semitones, tuning, editsVersion, scoreSource]);
 
   if (status === "loading") {
     return <p className="text-sm text-neutral-500">스템을 불러오는 중…</p>;
@@ -389,6 +408,8 @@ export default function PlayerShell({ hash }: { hash: string }) {
         onEditsChanged={() => setEditsVersion((v) => v + 1)}
         levels={manifest?.scoreVariants?.levels}
         onLevel={setLevel}
+        onSourceChange={setScoreSource}
+        onDragLoop={handleDragLoop}
         callbacks={{
           play: () => {
             void toggleTo(true);

@@ -23,13 +23,18 @@ PC = {"C": 0, "Db": 1, "C#": 1, "D": 2, "Eb": 3, "D#": 3, "E": 4, "F": 5,
 
 
 def chord_root_pc(symbol: str) -> int | None:
-    """코드 심볼("Dbm6/E")에서 루트 피치클래스."""
+    """코드 심볼에서 **베이스 음** 피치클래스. 슬래시 코드(Eb/G)는 슬래시
+    뒤(G)가 실제 베이스 음이다 — 베이스 채보와 대조하는 값이므로 루트가
+    아니라 베이스 음을 쓴다(실측: 예뻤어 Eb/G 구간이 전부 가짜 어긋남)."""
     if not symbol:
         return None
-    head = symbol.split("/")[0].strip()
-    for ln in (2, 1):
-        if head[:ln] in PC:
-            return PC[head[:ln]]
+    parts = symbol.split("/")
+    # 뒤에서부터 — 슬래시 베이스가 있으면 그것, 없으면 루트
+    for cand in reversed(parts):
+        cand = cand.strip()
+        for ln in (2, 1):
+            if cand[:ln] in PC:
+                return PC[cand[:ln]]
     return None
 
 

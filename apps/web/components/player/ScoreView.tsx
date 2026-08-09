@@ -56,6 +56,10 @@ interface Props {
   levels?: number[];
   /** 난이도 전환 — 연습 중 바꾸는 값이라 접이식 패널이 아니라 악보에 붙인다 */
   onLevel?: (level: number) => void;
+  /** 악보 소스 변경 알림 — 부모가 악보 연주(신스) 음원을 같은 소스로 맞춘다 */
+  onSourceChange?: (source: "auto" | "reference") => void;
+  /** 악보 위 가로 드래그로 마디 구간 반복 (0-based 마디 인덱스, 양끝 포함) */
+  onDragLoop?: (startBar: number, endBar: number) => void;
 }
 
 /** 난이도 번호 → 표시 이름 (ScoreControls의 LEVELS와 같은 값) */
@@ -116,6 +120,8 @@ export default function ScoreView({
   onEditsChanged,
   levels,
   onLevel,
+  onSourceChange,
+  onDragLoop,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
@@ -166,6 +172,38 @@ export default function ScoreView({
   // 스태프(보컬/베이스)를 눌렀는지 못 준다(실측: 보컬 음표 클릭에 Bass 비트가
   // 왔다). y는 우리가 잡아서 스태프를 직접 판별한다.
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  // 드래그 구간 루프 — 악보 위 가로 드래그로 마디 범위를 잡는다(PlayScore 문법).
+  const dragRef = useRef<{ x0: number; y0: number; active: boolean } | null>(null);
+  const [dragRect, setDragRect] = useState<{ left: number; width: number; top: number } | null>(null);
+  const scrollBoxRef = useRef<HTMLDivElement | null>(null);
+  /** 화면 좌표 → 마디 인덱스(0-). boundsLookup의 마스터바 사각형으로 찾는다 */
+  const barIndexAt = useCallback((clientX: number, clientY: number): number | null => {
+    const host = hostRef.current;
+    const api = apiRef.current;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lookup: any = api?.renderer?.boundsLookup;
+    if (!host || !lookup) return null;
+    const r = host.getBoundingClientRect();
+    const x = clientX - r.x;
+    const y = clientY - r.y;
+    let best: number | null = null;
+    let bestGap = Infinity;
+    for (const sys of lookup.staffSystems ?? []) {
+      const sb = sys.visualBounds;
+      if (!sb || y < sb.y || y > sb.y + sb.h) continue;
+      for (const mb of sys.bars ?? []) {
+        const b = mb.visualBounds;
+        if (!b) continue;
+        const inside = x >= b.x && x <= b.x + b.w;
+        const gap = inside ? 0 : Math.min(Math.abs(x - b.x), Math.abs(x - (b.x + b.w)));
+        if (gap < bestGap) {
+          bestGap = gap;
+          best = mb.index;
+        }
+      }
+    }
+    return best;
+  }, []);
   const barStartsRef = useRef<number[] | undefined>(barStarts);
   useEffect(() => {
     barStartsRef.current = barStarts;
@@ -179,8 +217,13 @@ export default function ScoreView({
     if (!editMode) setSelected(null);
   }, [editMode]);
   // 사용자 악보 모드에서는 보정이 성립하지 않는다(자동 채보 원본 대상).
+  const onSourceChangeRef = useRef(onSourceChange);
+  useEffect(() => {
+    onSourceChangeRef.current = onSourceChange;
+  }, [onSourceChange]);
   useEffect(() => {
     if (scoreSource === "reference") setEditMode(false);
+    onSourceChangeRef.current?.(scoreSource);
   }, [scoreSource]);
 
   // 렌더 중에 ref를 쓰면 안 된다(react-hooks/refs). effect에서 동기화한다.
@@ -525,7 +568,7 @@ export default function ScoreView({
     (async () => {
       try {
         if (scoreSource === "reference") {
-          const res = await fetch(`/api/scores/${hash}/reference`);
+          const res = await fetch(`/api/scores/${hash}/reference?transpose=${transpose}`);
           if (cancelled) return;
           if (!res.ok) {
             setReferenceAvailable(false);
@@ -1054,15 +1097,59 @@ export default function ScoreView({
         다크 모드에서도 종이는 종이다.
       */}
       <div
-        className={`max-h-[70vh] overflow-auto rounded-xl border border-neutral-200 bg-white shadow-sm transition-opacity dark:border-neutral-800 ${
+        ref={scrollBoxRef}
+        className={`relative max-h-[70vh] overflow-auto rounded-xl border border-neutral-200 bg-white shadow-sm transition-opacity dark:border-neutral-800 ${
           status === "ready" ? "opacity-100" : "opacity-0"
         }`}
         style={{ minHeight: status === "ready" ? undefined : 1 }}
         onPointerDownCapture={(e) => {
           // 스태프 판별용 — beatMouseDown보다 먼저(capture) 좌표를 잡아둔다
           lastPointerRef.current = { x: e.clientX, y: e.clientY };
+          // 드래그 루프 시작 후보 (보정 모드에서는 클릭이 편집이므로 제외)
+          if (!editModeRef.current && e.button === 0) {
+            dragRef.current = { x0: e.clientX, y0: e.clientY, active: false };
+          }
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          const dx = e.clientX - d.x0;
+          const dy = e.clientY - d.y0;
+          // 가로 40px 이상 + 가로가 세로보다 커야 드래그 루프로 본다
+          // (세로 우세면 스크롤 의도).
+          if (!d.active && Math.abs(dx) >= 40 && Math.abs(dx) > Math.abs(dy)) {
+            d.active = true;
+          }
+          if (d.active) {
+            setDragRect({
+              left: Math.min(d.x0, e.clientX),
+              width: Math.abs(dx),
+              top: d.y0 - 24,
+            });
+          }
+        }}
+        onPointerUp={(e) => {
+          const d = dragRef.current;
+          dragRef.current = null;
+          setDragRect(null);
+          if (!d?.active || !onDragLoop) return;
+          const a = barIndexAt(d.x0, d.y0);
+          const b = barIndexAt(e.clientX, e.clientY);
+          if (a === null || b === null) return;
+          onDragLoop(Math.min(a, b), Math.max(a, b));
+        }}
+        onPointerLeave={() => {
+          dragRef.current = null;
+          setDragRect(null);
         }}
       >
+        {dragRect && (
+          <div
+            className="pointer-events-none fixed z-30 h-12 rounded bg-amber-400/25 ring-1 ring-amber-500/60"
+            style={{ left: dragRect.left, width: dragRect.width, top: dragRect.top }}
+            aria-hidden
+          />
+        )}
         <div ref={hostRef} />
       </div>
     </section>

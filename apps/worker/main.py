@@ -264,7 +264,7 @@ async def put_edits(content_hash: str, body: dict) -> Response:
 
 
 @app.get("/api/scores/{content_hash}/reference-tex")
-async def reference_tex(content_hash: str) -> Response:
+async def reference_tex(content_hash: str, transpose: int = 0) -> Response:
     """사용자 악보(reference.json)를 오디오 마디 순서로 펼친 alphaTex.
 
     마디 수가 자동 채보와 같아지므로(근음 DP 매핑, pipeline/reference.py
@@ -289,7 +289,7 @@ async def reference_tex(content_hash: str) -> Response:
         our_roots.append(r % 12 if r is not None else None)
     mapping = ref_mod.align_bars(ref, our_roots)
     meta = jobs.score_metadata(content_hash)
-    tex = ref_mod.build_tex(ref, built.qscore, mapping, meta["title"])
+    tex = ref_mod.build_tex(ref, built.qscore, mapping, meta["title"], transpose=transpose)
     matched = sum(1 for m in mapping if m is not None)
     return Response(
         content=tex,
@@ -386,12 +386,13 @@ async def score_synth_notes(
     level: int = compose.ORIGINAL_LEVEL,
     transpose: int = 0,
     tuning: str | None = None,
+    source: str = "auto",
 ) -> Response:
     """악보 연주 이벤트 — 화면 악보와 같은 변형의 음표 타임라인(JSON).
 
     웹 베이스 샘플러가 원곡 반주 위에 악보를 연주할 때 쓴다. `/api/scores`와
     같은 인자·같은 `compose.build()`를 탄다 — 보이는 TAB과 들리는 소리가
-    달라지면 안 된다.
+    달라지면 안 된다. source=reference면 사용자 악보(내 악보)의 음을 낸다.
     """
     import json as json_mod
 
@@ -409,10 +410,25 @@ async def score_synth_notes(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if source == "reference":
+        from pipeline import reduce as reduce_mod
+        from pipeline import reference as ref_mod
+
+        ref = ref_mod.load(jobs.DATA / content_hash)
+        if ref is None:
+            raise HTTPException(status_code=404, detail="적재된 악보가 없습니다")
+        our_roots = [
+            (reduce_mod.bar_root(b) % 12 if reduce_mod.bar_root(b) is not None else None)
+            for b in built.qscore.bars
+        ]
+        mapping = ref_mod.align_bars(ref, our_roots)
+        notes = ref_mod.events(ref, built.qscore, mapping, transpose=transpose)
+    else:
+        notes = perform.events(built.qscore, built.fscore)
+
     return Response(
         content=json_mod.dumps(
-            {"level": built.level, "transpose": built.transpose,
-             "notes": perform.events(built.qscore, built.fscore)}
+            {"level": built.level, "transpose": built.transpose, "notes": notes}
         ),
         media_type="application/json",
         headers={"Cache-Control": "no-store"},

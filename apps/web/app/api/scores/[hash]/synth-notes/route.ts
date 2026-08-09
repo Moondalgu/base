@@ -22,6 +22,8 @@ export async function GET(
   });
   const tuning = params.get("tuning");
   if (tuning) query.set("tuning", tuning);
+  const source = params.get("source");
+  if (source) query.set("source", source);
 
   try {
     const upstream = await fetch(
