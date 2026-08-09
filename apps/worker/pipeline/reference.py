@@ -349,7 +349,7 @@ def _bar_tokens(bar: dict | None, beats_per_bar: int, transpose: int = 0) -> str
                 f2 += 12
             while f2 > 24:
                 f2 -= 12
-            onsets.append((f2, s))
+            onsets.append((f2, s, t.get("tech")))
     if not onsets:
         return "r.1"
     n = len(onsets)
@@ -362,9 +362,24 @@ def _bar_tokens(bar: dict | None, beats_per_bar: int, transpose: int = 0) -> str
     else:
         slots, duration = beats_per_bar * 4, 16
         onsets = onsets[:slots]
-    toks = [f"{f}.{s}.{duration}" for f, s in onsets]
+    toks = [_onset_token(f, s, tech, duration) for f, s, tech in onsets]
     toks.extend([f"r.{duration}"] * (slots - len(toks)))
     return " ".join(toks)
+
+
+# 판독 tech → alphaTex 노트 이펙트. 문법은 실측 확정(프로브 2026-08-09):
+# 이펙트는 `프렛.현` 뒤 `.길이` **앞** 중괄호다 — docs/tech/bass-techniques.md.
+_TECH_FX = {"slide": "sl", "shift-slide": "ss", "hammer": "h", "pull": "h",
+            "ghost": "g", "vibrato": "v", "palm-mute": "pm", "staccato": "st"}
+
+
+def _onset_token(fret: int, string: int, tech, duration: int) -> str:
+    if tech == "dead":
+        return f"x.{string}.{duration}"
+    fx = _TECH_FX.get(str(tech)) if tech else None
+    if fx:
+        return f"{fret}.{string}{{{fx}}}.{duration}"
+    return f"{fret}.{string}.{duration}"
 
 
 def _with_chord(token_line: str, chord: str | None) -> str:
