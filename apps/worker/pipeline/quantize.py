@@ -108,6 +108,7 @@ def quantize(
     verbose: bool = False,
     force_subdivision: int | None = None,
     force_phase: int | None = None,
+    kick_onsets: list[float] | None = None,
 ) -> QuantizedScore:
     """정리된 노트를 마디/슬롯 좌표로 옮긴다.
 
@@ -137,7 +138,7 @@ def quantize(
     if force_phase is not None:
         phase, phase_corrected = force_phase, False
     else:
-        phase, phase_corrected = choose_phase(notes, grid)
+        phase, phase_corrected = choose_phase(notes, grid, kick_onsets)
     bars = _build_bars(grid, phase, subdivision, slots_per_bar)
     grid_times, grid_coords = _build_grid(bars, grid, phase, subdivision, slots_per_bar)
     spacing = _median_spacing(grid_times)
@@ -260,16 +261,27 @@ def choose_subdivision(notes: list[Note], grid: BeatGrid) -> tuple[int, float]:
     return (4 if ratio >= SIXTEENTH_REQUIRED_RATIO else 2), ratio
 
 
-def choose_phase(notes: list[Note], grid: BeatGrid) -> tuple[int, bool]:
+def choose_phase(
+    notes: list[Note], grid: BeatGrid, kick_onsets: list[float] | None = None
+) -> tuple[int, bool]:
     """마디 시작 위상을 고른다. 반환 (phase, 다운비트에서 교정됐는지).
 
     beat_this의 다운비트는 위상이 통째로 어긋나는 경우가 있다. 실측 사례:
     킥 1·3박 + 스네어 2·4박 패턴에서 백비트를 1박으로 듣고 다운비트를
     반 마디 밀어서 잡았다. 이러면 악보 전체가 밀린다.
 
-    베이스는 이걸 교정할 단서를 준다. 베이시스트는 마디 첫 박에 루트를
-    강하게 짚으므로, **강한 베이스 온셋이 마디 시작에 가장 많이 걸리는 위상**이
-    맞을 확률이 높다. 후보 위상마다 점수를 매겨 고른다.
+    기본 단서는 ①곡의 첫 강한 베이스 음 = 1박 가정(픽업/싱커페이션 진입
+    곡에서 틀린다 — 예뻤어가 반례) ②진폭 합이 가장 큰 위상.
+
+    kick_onsets(드럼 스템 분류의 킥 시각)가 있으면 그것이 기본 단서를
+    심판한다 — 킥은 1·3박에 온다. 다만 1·3박 채점은 반마디 대칭이라
+    위상 쌍 {q, q+bpb/2}까지만 좁힌다. 기본 단서가 그 쌍 안이면 그대로
+    두고(킥이 동의), 쌍 밖이면(홀수 박 어긋남 — 예뻤어 사례) 쌍 안에서
+    1박 정렬이 우세한 쪽으로 교정한다. 각 단계에 우세 가드를 둔 이유:
+    실측(2026-08-09)에서 위상이 맞는 곡들은 점수가 평평하거나(퀸
+    195:192, 컴투게더 309 동점) 쌍이 애매해서(드라우닝 180 vs 137,
+    1.31배) 가드가 없으면 맞는 위상을 흔든다. 예뻤어만 쌍 우세
+    180:78(2.3배)·쌍 내 105:75(1.4배)로 가드를 넘어 교정됐다.
     """
     beats = grid.beats
     bpb = grid.beats_per_bar
@@ -294,6 +306,35 @@ def choose_phase(notes: list[Note], grid: BeatGrid) -> tuple[int, bool]:
         idx = min(candidates, key=lambda i: abs(beats[i] - t))
         return idx if abs(beats[idx] - t) <= half_beat else None
 
+    def kick_adjudicate(base: int) -> int:
+        """킥 정렬로 base 위상을 심판한다. 확신이 없으면 base 그대로."""
+        if not kick_onsets or len(kick_onsets) < 16 or bpb % 2 != 0:
+            return base
+        s1 = [0] * bpb   # 킥이 1박에 걸리는 수 (위상 후보별)
+        s13 = [0] * bpb  # 킥이 1·3박에 걸리는 수
+        for t in kick_onsets:
+            idx = beat_index(t)
+            if idx is None:
+                continue  # 반박 밖 킥은 무시 — 반박 어긋난 격자는 단서가 약해진다
+            for p in range(bpb):
+                r = (idx - p) % bpb
+                if r == 0:
+                    s1[p] += 1
+                if r in (0, bpb // 2):
+                    s13[p] += 1
+        q = max(range(bpb), key=lambda p: s13[p])
+        pair = {q, (q + bpb // 2) % bpb}
+        outside = max(s13[p] for p in range(bpb) if p not in pair)
+        if s13[q] < len(kick_onsets) * 0.25 or s13[q] < outside * 1.5:
+            return base  # 쌍이 우세하지 않다 — 킥 단서 불충분
+        if base in pair:
+            return base  # 킥이 기본 단서에 동의
+        a, b = sorted(pair)
+        hi, lo = (a, b) if s1[a] >= s1[b] else (b, a)
+        if s1[lo] and s1[hi] < s1[lo] * 1.3:
+            return base  # 쌍 내 1박 우세가 없다 — 교정 보류
+        return hi
+
     # 가장 강한 단서: 곡의 첫 음은 거의 항상 마디 1박이다.
     # (픽업 마디로 시작하는 곡에서는 틀리지만 소수다)
     ordered = sorted(notes, key=lambda n: n.start)
@@ -308,7 +349,8 @@ def choose_phase(notes: list[Note], grid: BeatGrid) -> tuple[int, bool]:
             break
 
     if first_phase is not None:
-        return first_phase, first_phase != downbeat_phase
+        chosen = kick_adjudicate(first_phase)
+        return chosen, chosen != downbeat_phase
 
     # 첫 음을 못 잡으면 진폭 합이 가장 큰 위상으로 대체
     scores = [0.0] * bpb
@@ -316,7 +358,7 @@ def choose_phase(notes: list[Note], grid: BeatGrid) -> tuple[int, bool]:
         idx = beat_index(note.start)
         if idx is not None:
             scores[idx % bpb] += note.amplitude
-    best = max(range(bpb), key=lambda p: scores[p])
+    best = kick_adjudicate(max(range(bpb), key=lambda p: scores[p]))
     return best, best != downbeat_phase
 
 

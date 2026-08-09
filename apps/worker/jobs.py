@@ -220,6 +220,14 @@ def build_score_variant(
     # 적용해야 하향·이조·운지 전부에 전파된다 (pipeline/edits.py 머리말).
     from pipeline import edits as edits_mod
 
+    # 드럼 리듬(drums.json)이 있으면 밴드 악보에 드럼 트랙이 붙는다.
+    # 없으면 기존 2~3단 그대로 — 구버전 산출물 호환.
+    from pipeline import drums as drums_mod
+
+    drum_events = drums_mod.load(workdir)
+    # 킥 온셋(원시 좌표)은 다운비트 위상 심판용 (quantize.choose_phase).
+    kick_onsets = drums_mod.load_kicks(workdir)
+
     return compose.build(
         edits_mod.apply(bassclean.load_notes(notes_path), edits_mod.load(workdir)),
         beats.BeatGrid.from_json(beats_path),
@@ -233,6 +241,8 @@ def build_score_variant(
         vocal_syllables=vocal_syllables,
         chord_tones=chord_tones,
         diatonic_pcs=diatonic,
+        drum_events=drum_events,
+        kick_onsets=kick_onsets,
     )
 
 

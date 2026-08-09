@@ -171,6 +171,7 @@ def build(
     key_signature: str | None = None,
     vocal: "QuantizedScoreLike | None" = None,
     vocal_syllables: list[dict] | None = None,
+    drum_lines: list[str] | None = None,
 ) -> str:
     """FrettedScore를 AlphaTex 문자열로 만든다.
 
@@ -231,6 +232,12 @@ def build(
         )
         bar_texts.append(text)
     lines.append(" |\n".join(bar_texts))
+
+    # 드럼 트랙(밴드 악보 B-3). drums.render_track()이 만든 줄들을 그대로
+    # 받는다 — 퍼커션 노트 문법(괄호 필수)은 drums.py가 책임진다.
+    if drum_lines:
+        lines.append("")
+        lines.extend(drum_lines)
 
     if include_sync:
         lines.append("")

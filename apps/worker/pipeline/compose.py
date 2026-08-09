@@ -64,6 +64,8 @@ def build(
     vocal_syllables: list[dict] | None = None,
     chord_tones: dict[int, frozenset[int]] | None = None,
     diatonic_pcs: frozenset[int] | None = None,
+    drum_events: list[dict] | None = None,
+    kick_onsets: list[float] | None = None,
 ) -> BuiltScore:
     """노트와 비트 그리드로 AlphaTex를 만든다.
 
@@ -90,7 +92,8 @@ def build(
         QuantizedScore, FrettedScore, ReduceReport, str
     ]:
         qs = quantize.quantize(
-            working, grid, verbose=verbose, force_subdivision=force_subdivision
+            working, grid, verbose=verbose, force_subdivision=force_subdivision,
+            kick_onsets=kick_onsets,
         )
         # 패턴 관성 — 섹션 안의 리듬을 최빈 패턴으로 통일한다. 이것은 편집이
         # 아니라 **검출 보정**이다(반복 구조로 놓친 타현을 되살린다). 그래서
@@ -128,10 +131,18 @@ def build(
             # 멜로디에서 최대 1/16박 이동은 지면 안정과 맞바꿀 만하다.
             _snap_vocal_to_eighths(vocal_q)
             _legato_vocal(vocal_q)
+        drum_lines = None
+        if drum_events:
+            from . import drums as drums_mod
+
+            # 드럼은 리듬 정보라 이조·하향과 무관 — 격자 좌표 그대로 얹는다.
+            drum_lines = drums_mod.render_track(
+                drum_events, len(fs.bars), fs.beats_per_bar
+            )
         return qs, fs, report, alphatex.build(
             fs, title=title, artist=artist, include_sync=include_sync,
             chords=chords, key_signature=key_signature, vocal=vocal_q,
-            vocal_syllables=vocal_syllables,
+            vocal_syllables=vocal_syllables, drum_lines=drum_lines,
         )
 
     subdivision_forced = False
