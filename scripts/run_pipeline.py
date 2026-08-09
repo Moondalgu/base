@@ -115,6 +115,9 @@ def main() -> int:
         note_events,
         verbose=True,
         monophonic_source=monophonic,
+        # 워커 경로(jobs.py)와 같은 인자로 유지한다 — 갈리면 CLI로 만든
+        # 산출물과 서비스 산출물이 조용히 달라진다.
+        beat_sec=(60.0 / grid.median_bpm) if grid.median_bpm > 0 else None,
     )
     stages["bassclean"] = _done(t)
 

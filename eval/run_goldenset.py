@@ -34,6 +34,12 @@ SONGS = [
     ("Virtual Insanity", "d4fd7b689b9db1bb", "songsterr_jamiroquai_virtual_insanity.json"),
     ("Drowning", "65ef1cf020561a5c", "songsterr_woodz_drowning.json"),
     ("예뻤어", "8181e1aa7d7a0be1", "songsterr_day6_ywb.json"),
+    # 이 탭은 E♭튜닝(사운딩 A♭)이라 원곡 스튜디오 녹음(A장조)보다 반음 낮다.
+    # 이조 자동 탐색이 그 −1을 찾아내야 한다 — 못 찾으면 지표가 아니라
+    # 도구 문제다(골든셋 "결함 0"과 같은 종류).
+    ("Highway to Hell", "a7b3735a1e06ccde", "songsterr_acdc_hth_bass.json"),
+    # 같은 곡 여성 보컬 커버(First To Eleven). 실측상 원곡 −1반음 = 탭과 동일 키.
+    ("HTH 커버(F2E)", "2c80d86eb66dd69a", "songsterr_acdc_hth_bass.json"),
 ]
 
 

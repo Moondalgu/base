@@ -49,6 +49,12 @@ OVERLAP_TOLERANCE = 0.05
 # 다시 치면 진폭이 오르고(정답 데이터셋 중앙값 1.25배), 조각은 감쇠 중이라
 # 앞 조각보다 낮다(중앙값 0.87배). 온셋 간격으로는 갈리지 않는다.
 MERGE_MAX_AMPLITUDE_RATIO = 0.8
+# 앞 음이 이 길이(박) 이하이면 "한 번 뜯은 음의 조각"으로 보고 진폭비를 묻지
+# 않고 병합한다. 한 번 뜯은 음의 앞머리가 16분음표(0.25박)보다 짧게 끊길 수는
+# 없다는 연주 사실에 기댄 값이고, 골든셋 스윙(none/0.2/0.3/0.4)에서 0.3이
+# 최적이었다. 0.4로 올리면 Drowning 타현이 82%→33%로 무너진다(진짜 8분 페달을
+# 삼킨다). **CREPE 출력에만 적용된다** — clean()의 주석 참조.
+SHORT_PREV_BEATS = 0.3
 
 # 스템 분리가 불완전해 베이스가 쉬는 구간에 다른 악기 배음이 누출되고,
 # basic-pitch가 이를 음으로 오검출하는 경우가 있다. 절대 피치로는 판정할
@@ -116,11 +122,71 @@ class CleanReport:
         return self.dropped_harmonic / self.input_count if self.input_count else 0.0
 
 
+def merge_same_pitch(
+    notes: list[Note], *,
+    ratio: float | None = None,
+    gap: float | None = None,
+    short_prev_sec: float | None = None,
+) -> tuple[list[Note], int]:
+    """같은 피치가 짧은 간격으로 이어지면 한 음으로 병합. 반환 (노트, 병합 수).
+
+    병합 판정은 step5가 잘라낸 end가 아니라 채보 엔진이 원래 검출한
+    detected_end 기준으로 한다. 안 그러면 step5가 맞닿게 잘라둔 별개의 음까지
+    간격 0으로 보여서 계속 붙어버린다.
+
+    온셋 간격 대신 진폭비로 "쪼개진 조각"인지 "다시 친 음"인지 가른다. 조각은
+    앞소리보다 감쇠해서 진폭이 낮고(중앙값 0.87배), 재연주(루트 페달 포함)는
+    다시 치니 진폭이 오른다(중앙값 1.25배). detected_end 간격 조건은 멀리
+    떨어진 음이 붙는 것을 막는 안전장치로 그대로 둔다.
+
+    **진폭비만으로는 갈리지 않는 곡이 있다.** AC/DC "Highway to Hell"의 병합
+    후보쌍은 진폭비 중앙값이 1.00이라(서스테인이 길어 조각도 안 약해진다)
+    조건을 통과하지 못하고, 한 번 뜯은 4분음표가 16분 두 조각으로 남아
+    마디마다 타현이 하나씩 늘었다. 임계를 올려 해결하려 하면 진짜 재타현을
+    뭉갠다 — 실측에서 Drowning 타현 일치율이 83%→12%로 붕괴했다.
+
+    그래서 두 번째 판별자를 둔다: **앞 음이 아주 짧으면 조각으로 본다.**
+    한 번 뜯은 음의 앞머리는 16분음표보다 짧게 끊길 수 없다. 실측 분포가
+    이것을 뒷받침한다 — 병합 후보쌍 중 앞음이 16분 이하인 비율이 HTH는
+    55%인데 Drowning은 10%다(같은 척도, 진폭비는 둘 다 1.00으로 무의미).
+
+    short_prev_sec을 주면 그 길이 이하의 앞음은 진폭비를 묻지 않고 병합한다.
+
+    ratio/gap을 주면 모듈 상수 대신 그 값을 쓴다 — 임계를 정답으로 채점하는
+    스윕(eval/sweep_merge.py)이 재채보 없이 이 단계만 다시 돌리기 위한 것이다.
+    """
+    r = MERGE_MAX_AMPLITUDE_RATIO if ratio is None else ratio
+    g = MERGE_GAP_SEC if gap is None else gap
+    merged = 0
+    out: list[Note] = []
+    for note in notes:
+        if out:
+            prev = out[-1]
+            short_prev = (
+                short_prev_sec is not None
+                and prev.detected_end - prev.start <= short_prev_sec
+            )
+            if (prev.pitch == note.pitch
+                    and (short_prev or note.amplitude < prev.amplitude * r)
+                    and note.start - prev.detected_end <= g):
+                prev.end = max(prev.end, note.end)
+                prev.detected_end = max(prev.detected_end, note.detected_end)
+                # amplitude는 max로만 올라간다. 조각 체인이 이어질 때마다 기준
+                # 진폭이 커지는 셈인데, 이건 의도된 동작이다 — 감쇠하는 뒷조각을
+                # 계속 앞음(가장 센 진폭) 기준으로 흡수해야 한다.
+                prev.amplitude = max(prev.amplitude, note.amplitude)
+                merged += 1
+                continue
+        out.append(note)
+    return out, merged
+
+
 def clean(
     note_events: list[tuple],
     *,
     verbose: bool = False,
     monophonic_source: bool = False,
+    beat_sec: float | None = None,
 ) -> tuple[list[Note], CleanReport]:
     """basic-pitch의 note_events를 단선율 베이스 라인으로 정리한다.
 
@@ -232,33 +298,18 @@ def clean(
             mono.append(note)
         notes = mono
 
-        # 6) 같은 피치가 짧은 간격으로 이어지면 한 음으로 병합
-        merged_notes: list[Note] = []
-        for note in notes:
-            if merged_notes:
-                prev = merged_notes[-1]
-                # 병합 판정은 step5가 잘라낸 end가 아니라 basic-pitch가 원래
-                # 검출한 detected_end 기준으로 한다. 안 그러면 step5가 맞닿게
-                # 잘라둔 별개의 음까지 간격 0으로 보여서 계속 붙어버린다.
-                #
-                # 온셋 간격 대신 진폭비로 "쪼개진 조각"인지 "다시 친 음"인지
-                # 가른다. 조각은 앞소리보다 감쇠해서 진폭이 낮고(중앙값 0.87배),
-                # 재연주(루트 페달 포함)는 다시 치니 진폭이 오른다(중앙값 1.25배).
-                # detected_end 간격 조건은 멀리 떨어진 음이 붙는 것을 막는
-                # 안전장치로 그대로 둔다.
-                if (prev.pitch == note.pitch
-                        and note.amplitude < prev.amplitude * MERGE_MAX_AMPLITUDE_RATIO
-                        and note.start - prev.detected_end <= MERGE_GAP_SEC):
-                    prev.end = max(prev.end, note.end)
-                    prev.detected_end = max(prev.detected_end, note.detected_end)
-                    # amplitude는 max로만 올라간다. 조각 체인이 이어질 때마다
-                    # 기준 진폭이 커지는 셈인데, 이건 의도된 동작이다 — 감쇠하는
-                    # 뒷조각들을 계속 앞음(가장 센 진폭) 기준으로 흡수해야 한다.
-                    prev.amplitude = max(prev.amplitude, note.amplitude)
-                    merged += 1
-                    continue
-            merged_notes.append(note)
-        notes = merged_notes
+        # 6) 같은 피치가 짧은 간격으로 이어지면 한 음으로 병합.
+        #
+        # 짧은 앞음 판별자는 **단선율 엔진(CREPE) 출력에만** 건다. 골든셋
+        # 8곡 채점에서 CREPE 곡은 순 +29pp(Champagne +18, HTH +16), basic-pitch
+        # 곡은 둘 다 −10pp로 정확히 갈렸다. basic-pitch는 폴리포닉
+        # 아키텍처라 지속음을 0.17초 조각으로 쪼개는데, 그 조각은 이미 진폭비
+        # 병합이 맡고 있어서 길이 규칙을 더 걸면 진짜 음까지 삼킨다.
+        short_prev = (
+            beat_sec * SHORT_PREV_BEATS
+            if (beat_sec and monophonic_source) else None
+        )
+        notes, merged = merge_same_pitch(notes, short_prev_sec=short_prev)
     else:
         # 단선율 엔진 출력은 이미 시각 순이고 서로 겹치지 않는다. 정렬만 보장한다.
         notes.sort(key=lambda n: n.start)

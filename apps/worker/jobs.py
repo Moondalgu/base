@@ -395,6 +395,9 @@ async def _run(job: Job) -> None:
             bassclean.clean,
             note_events,
             monophonic_source=monophonic,
+            # 조각 판정의 "짧다"는 박 길이에 비례한다 — 느린 곡의 16분과
+            # 빠른 곡의 16분은 절대 시간이 다르다.
+            beat_sec=(60.0 / grid.median_bpm) if grid.median_bpm > 0 else None,
         )
         # 실제 음량을 재서 두 연주가 섞인 입력을 정리한다. 연습 영상은 원곡
         # 반주 위에 커버 연주가 겹치는데, 크게 녹음된 쪽(커버)만 남기면 리듬이
