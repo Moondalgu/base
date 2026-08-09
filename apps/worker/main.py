@@ -426,9 +426,17 @@ async def score_synth_notes(
     else:
         notes = perform.events(built.qscore, built.fscore)
 
+    # 드럼 타임라인 — 악보의 드럼 트랙과 같은 격자(drums.json)에서.
+    # 이조·난이도와 무관한 리듬 정보라 always 동봉, 없으면 빈 목록.
+    from pipeline import drums as drums_mod
+
+    drum_grid = drums_mod.load(jobs.DATA / content_hash) or []
+    drum_hits = drums_mod.events(drum_grid, built.qscore.bars)
+
     return Response(
         content=json_mod.dumps(
-            {"level": built.level, "transpose": built.transpose, "notes": notes}
+            {"level": built.level, "transpose": built.transpose,
+             "notes": notes, "drums": drum_hits}
         ),
         media_type="application/json",
         headers={"Cache-Control": "no-store"},

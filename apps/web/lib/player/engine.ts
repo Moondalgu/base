@@ -144,6 +144,8 @@ export interface SynthNote {
   d: number;
   midi: number;
   v: number;
+  /** 드럼 히트면 악기 문자("K"킥 "S"스네어 "H"햇 조합). midi는 무시된다 */
+  k?: string;
 }
 
 /** 단음 샘플 에셋 범위 (tools/gen_bass_samples.py와 같은 값) */
@@ -264,7 +266,9 @@ export class StemPlayer {
   private _synthTimer: number | null = null;
   private _synthCursor = -1;
   private _synthLastOutput = 0;
-  private _pendingVoices: AudioBufferSourceNode[] = [];
+  private _pendingVoices: AudioScheduledSourceNode[] = [];
+  /** 드럼 합성용 노이즈 버퍼 — 첫 타에서 만들어 재사용 */
+  private _noiseBuffer: AudioBuffer | null = null;
 
   private constructor(
     ctx: AudioContext | OfflineAudioContext,
@@ -519,9 +523,10 @@ export class StemPlayer {
   setSynthNotes(notes: SynthNote[] | null): void {
     this._synthNotes = notes ? [...notes].sort((a, b) => a.t - b.t) : [];
     this._synthCursor = -1;
-    if (this._synthNotes.length > 0) {
+    const pitched = this._synthNotes.filter((n) => !n.k);
+    if (pitched.length > 0) {
       this._sampler ??= new BassSampler(this.ctx);
-      this._sampler.prefetch(this._synthNotes.map((n) => n.midi));
+      this._sampler.prefetch(pitched.map((n) => n.midi));
     }
   }
 
@@ -702,6 +707,10 @@ export class StemPlayer {
 
   /** 음표 한 개 — 단음 샘플 + 듀레이션 엔벨로프. 길이는 출력 시간으로 환산 */
   private scheduleVoice(note: SynthNote, at: number): void {
+    if (note.k) {
+      for (const c of note.k) this.scheduleDrum(c, at);
+      return;
+    }
     const buffer = this._sampler?.get(note.midi);
     if (!buffer) return; // 아직 디코딩 전이거나 없는 샘플 — 그 음만 쉰다
 
@@ -721,6 +730,64 @@ export class StemPlayer {
     gain.connect(ctx.destination);
     src.start(at);
     src.stop(sustainEnd + VOICE_RELEASE_SEC + 0.02);
+    this._pendingVoices.push(src);
+    src.onended = () => {
+      const i = this._pendingVoices.indexOf(src);
+      if (i >= 0) this._pendingVoices.splice(i, 1);
+    };
+  }
+
+  /**
+   * 드럼 한 타 — 샘플 없이 합성한다(킥=사인 스윕, 스네어=노이즈+톤,
+   * 햇=하이패스 노이즈). 악보 드럼 트랙과 같은 격자의 리듬 가이드라
+   * 존재감은 낮게(베이스 연주를 가리면 안 된다).
+   */
+  private scheduleDrum(kind: string, at: number): void {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    g.connect(ctx.destination);
+    if (kind === "K") {
+      const osc = ctx.createOscillator();
+      osc.frequency.setValueAtTime(140, at);
+      osc.frequency.exponentialRampToValueAtTime(45, at + 0.1);
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.55, at + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+      osc.connect(g);
+      osc.start(at);
+      osc.stop(at + 0.18);
+      this._pendingVoices.push(osc);
+      return;
+    }
+    // 스네어·햇은 노이즈 기반. 버퍼는 한 번 만들어 재사용한다.
+    if (!this._noiseBuffer) {
+      const len = Math.floor(ctx.sampleRate * 0.2);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+      this._noiseBuffer = buf;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuffer;
+    const filter = ctx.createBiquadFilter();
+    if (kind === "S") {
+      filter.type = "bandpass";
+      filter.frequency.value = 1800;
+      filter.Q.value = 0.7;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.35, at + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14);
+    } else {
+      filter.type = "highpass";
+      filter.frequency.value = 7000;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.16, at + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.05);
+    }
+    src.connect(filter);
+    filter.connect(g);
+    src.start(at);
+    src.stop(at + 0.16);
     this._pendingVoices.push(src);
     src.onended = () => {
       const i = this._pendingVoices.indexOf(src);

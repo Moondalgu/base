@@ -340,7 +340,16 @@ export default function PlayerShell({ hash }: { hash: string }) {
         const res = await fetch(`/api/scores/${hash}/synth-notes?${query}`);
         if (!res.ok) return;
         const data = await res.json();
-        if (!stale && Array.isArray(data?.notes)) player.setSynthNotes(data.notes);
+        if (!stale && Array.isArray(data?.notes)) {
+          // 드럼 히트는 같은 타임라인에 얹는다. +1ms 오프셋은 같은 시각의
+          // 베이스 음이 스케줄러 중복 가드(0.5ms)에 걸려 떨어지지 않게 한다.
+          const drums = Array.isArray(data?.drums)
+            ? data.drums.map((d: { t: number; k: string }) => ({
+                t: d.t + 0.001, d: 0.1, midi: 0, v: 1, k: d.k,
+              }))
+            : [];
+          player.setSynthNotes([...data.notes, ...drums]);
+        }
       } catch {
         // 워커가 없으면 연주 모드도 없다 — 반주는 그대로 나온다.
       }

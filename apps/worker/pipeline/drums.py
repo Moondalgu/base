@@ -100,6 +100,28 @@ def to_grid(raw: list[dict], bar_starts: list[float],
             for k, v in sorted(grid.items())]
 
 
+def events(grid_events: list[dict], bars) -> list[dict]:
+    """격자 이벤트 → 재생 타임라인 [{"t": 초, "k": "KH"}...].
+
+    bars는 qscore/fscore의 마디 목록(start_sec/end_sec) — 악보 연주
+    스케줄러가 화면 악보와 같은 좌표로 드럼을 울리게 한다."""
+    out = []
+    for e in grid_events:
+        i = e["bar"]
+        if i < 0 or i >= len(bars):
+            continue
+        bar = bars[i]
+        span = bar.end_sec - bar.start_sec
+        if span <= 0:
+            continue
+        out.append({
+            "t": round(bar.start_sec + e["slot"] / 8 * span, 4),
+            "k": e["labels"],
+        })
+    out.sort(key=lambda x: x["t"])
+    return out
+
+
 ONSETS_FILENAME = "drum_onsets.json"
 
 
