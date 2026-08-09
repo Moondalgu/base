@@ -65,7 +65,12 @@ def main() -> int:
     measures = root.findall("./part/measure")
     check("마디 수 일치", len(measures) == src_bars, f"{len(measures)} vs {src_bars}")
 
-    xml_notes = [n for n in root.iter("note") if n.find("rest") is None]
+    # 타이 stop(마디 이월 연속분)은 별도 <note>지만 새 음이 아니다 — 뺀다.
+    xml_notes = [
+        n for n in root.iter("note")
+        if n.find("rest") is None
+        and not any(t.get("type") == "stop" for t in n.findall("tie"))
+    ]
     check("음 수 일치", len(xml_notes) == src_notes, f"{len(xml_notes)} vs {src_notes}")
 
     # 마디마다 duration 합이 한 마디여야 한다.

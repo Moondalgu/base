@@ -317,24 +317,39 @@ def _viterbi(
         row_back: list[int] = []
         prev_options, prev_costs = _last_nonempty(states, costs, i)
 
-        for option in options:
+        # 이동 제약은 **음 단위**로 판정한다 — 후보 단위로 풀면 제약을 넘는
+        # 후보가 개별 면제를 받아, 현 유지 가중치가 큰 초급에서 "같은 현
+        # 8프렛 도약"이 "현만 바꾸면 3프렛"을 이긴다(Queen F1→C#2 실측).
+        # 어떤 후보도 통과하지 못할 때만 전부 풀어 악보에 구멍을 안 낸다.
+        allowed_per_option: list[list[tuple[float, int]] | None] = [None] * len(options)
+        if prev_options and max_move is not None:
+            for k, option in enumerate(options):
+                allowed_per_option[k] = [
+                    (prev_costs[j] + _transition_cost(prev_options[j], option, weights), j)
+                    for j in range(len(prev_options))
+                    if _move_span(prev_options[j], option) <= max_move
+                ]
+            if not any(allowed_per_option):
+                allowed_per_option = [None] * len(options)  # 전부 막힘 — 제약 해제
+
+        for k, option in enumerate(options):
             base = _position_cost(option, len(tuning), weights)
             if not prev_options:
                 row_costs.append(base)
                 row_back.append(-1)
                 continue
-            transitions = [
-                (prev_costs[j] + _transition_cost(prev_options[j], option, weights), j)
-                for j in range(len(prev_options))
-            ]
-            if max_move is not None:
-                allowed = [
-                    t for t in transitions
-                    if _move_span(prev_options[t[1]], option) <= max_move
+            if allowed_per_option[k] is not None:
+                transitions = allowed_per_option[k]
+                if not transitions:
+                    # 다른 후보는 제약을 통과한다 — 이 후보는 배제한다.
+                    row_costs.append(float("inf"))
+                    row_back.append(0)
+                    continue
+            else:
+                transitions = [
+                    (prev_costs[j] + _transition_cost(prev_options[j], option, weights), j)
+                    for j in range(len(prev_options))
                 ]
-                # 제약을 통과하는 경로가 없으면 제약을 풀고 최소 이동을 쓴다.
-                # 여기서 끊으면 그 음이 악보에서 사라진다.
-                transitions = allowed or transitions
             best_cost, best_idx = min(transitions, key=lambda pair: pair[0])
             row_costs.append(base + best_cost)
             row_back.append(best_idx)

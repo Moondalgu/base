@@ -110,6 +110,7 @@ def to_musicxml(
 
     part = ET.SubElement(root, "part", id="P1")
 
+    carry = None  # 앞 마디에서 넘어온 (note, 남은 슬롯 수)
     for bi, bar in enumerate(score.bars):
         measure = ET.SubElement(part, "measure", number=str(bi + 1))
 
@@ -140,14 +141,12 @@ def to_musicxml(
         # 슬롯 -> 4분음표 환산. 마디 안 슬롯 수와 박자로 정해진다.
         quarters_per_slot = score.beats_per_bar / bar.slots_per_bar
 
-        cursor = 0
-        for note in sorted(bar.notes, key=lambda n: n.slot):
-            if note.slot > cursor:
-                _rest(measure, (note.slot - cursor) * quarters_per_slot)
-            _note(measure, note, quarters_per_slot, score.tuning)
-            cursor = note.slot + note.duration_slots
-        if cursor < bar.slots_per_bar:
-            _rest(measure, (bar.slots_per_bar - cursor) * quarters_per_slot)
+        # 마디를 넘는 음은 마디 끝에서 자르고 다음 마디 앞머리에 타이로 잇는다
+        # (alphatex와 같은 규칙). 자르지 않으면 <measure> 총 길이가 박자표를
+        # 넘겨 MuseScore가 마디를 다시 그린다(실측: 예뻤어 10마디 어긋남).
+        carry = _emit_bar_notes(
+            measure, bar, quarters_per_slot, score.tuning, carry
+        )
 
     # `ET.indent`로 보기 좋게 만든다. **다시 파싱하지 않는다** —
     # `minidom.parseString`을 쓰면 우리가 만든 문자열이라도 XML 파서를 한 번 더
@@ -163,6 +162,42 @@ def to_musicxml(
     )
 
 
+def _emit_bar_notes(
+    measure: ET.Element, bar, quarters_per_slot: float, tuning: list[int],
+    carry: tuple | None,
+) -> tuple | None:
+    """마디 하나의 음·쉼표를 적는다. 반환 = 다음 마디로 넘길 (note, 남은 슬롯).
+
+    마디를 넘는 음은 여기서 자르고 tie stop/start로 잇는다 — <measure>의
+    duration 합이 정확히 박자표와 같아야 한다."""
+    cursor = 0
+    if carry is not None:
+        note, remain = carry
+        # 이 마디에 이미 음이 있으면 그 앞까지만 끈다 — 겹치면 마디가 넘친다.
+        first = min((n.slot for n in bar.notes), default=bar.slots_per_bar)
+        take = min(remain, bar.slots_per_bar, first)
+        if take > 0:
+            _note(measure, note, quarters_per_slot, tuning,
+                  duration_slots=take, tie_stop=True,
+                  tie_start=remain > take and first >= bar.slots_per_bar)
+            cursor = take
+        carry = ((note, remain - take)
+                 if remain > take and first >= bar.slots_per_bar else None)
+    for note in sorted(bar.notes, key=lambda n: n.slot):
+        if note.slot > cursor:
+            _rest(measure, (note.slot - cursor) * quarters_per_slot)
+        take = min(note.duration_slots, bar.slots_per_bar - note.slot)
+        spills = note.duration_slots > take
+        _note(measure, note, quarters_per_slot, tuning, duration_slots=take,
+              tie_start=spills)
+        cursor = note.slot + take
+        if spills:
+            carry = (note, note.duration_slots - take)
+    if cursor < bar.slots_per_bar:
+        _rest(measure, (bar.slots_per_bar - cursor) * quarters_per_slot)
+    return carry
+
+
 def _rest(measure: ET.Element, quarters: float) -> None:
     el = ET.SubElement(measure, "note")
     ET.SubElement(el, "rest")
@@ -174,9 +209,12 @@ def _rest(measure: ET.Element, quarters: float) -> None:
 
 
 def _note(
-    measure: ET.Element, note, quarters_per_slot: float, tuning: list[int]
+    measure: ET.Element, note, quarters_per_slot: float, tuning: list[int],
+    *, duration_slots: int | None = None,
+    tie_start: bool = False, tie_stop: bool = False,
 ) -> None:
-    quarters = note.duration_slots * quarters_per_slot
+    quarters = (duration_slots if duration_slots is not None
+                else note.duration_slots) * quarters_per_slot
     el = ET.SubElement(measure, "note")
 
     pitch = ET.SubElement(el, "pitch")
@@ -189,6 +227,12 @@ def _note(
     ET.SubElement(pitch, "octave").text = str(note.pitch // 12)
 
     ET.SubElement(el, "duration").text = str(max(1, round(quarters * DIVISIONS)))
+    # 타이는 <tie>(소리)와 <notations><tied>(표기) 둘 다 필요하고,
+    # DTD 순서상 <tie>는 duration 직후·type 앞이다.
+    if tie_stop:
+        ET.SubElement(el, "tie", type="stop")
+    if tie_start:
+        ET.SubElement(el, "tie", type="start")
     name, dots = _type_of(quarters)
     ET.SubElement(el, "type").text = name
     for _ in range(dots):
@@ -196,6 +240,10 @@ def _note(
 
     # 현·프렛. **이것이 MusicXML을 쓰는 이유다** — MIDI로는 담을 수 없다.
     notations = ET.SubElement(el, "notations")
+    if tie_stop:
+        ET.SubElement(notations, "tied", type="stop")
+    if tie_start:
+        ET.SubElement(notations, "tied", type="start")
     technical = ET.SubElement(notations, "technical")
     ET.SubElement(technical, "string").text = str(note.string + 1)
     ET.SubElement(technical, "fret").text = str(note.fret)
