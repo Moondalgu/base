@@ -152,6 +152,19 @@ export default function ScoreControls({
             <span className={BADGE}>{`키 ${transpose > 0 ? `+${transpose}` : transpose}`}</span>
           )}
           <span className={BADGE}>{tuningLabel}</span>
+          {/* MuseScore 행 — 접힌 상태에서도 보이는 내보내기 지름길.
+              "무료 툴로 밴드 악보" 수요층이 원하는 딱 그 버튼(영상 분석 근거).
+              summary 클릭(접기)과 겹치지 않게 전파를 끊는다. */}
+          {contentHash && (
+            <a
+              href={`/api/exports/${contentHash}/${contentHash}.musicxml?level=${level}&transpose=${transpose}&tuning=${tuning}`}
+              onClick={(e) => e.stopPropagation()}
+              className="rounded-md border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              title="MusicXML로 내려받아 MuseScore에서 바로 엽니다. 지금 화면의 난이도·키 그대로."
+            >
+              MuseScore로
+            </a>
+          )}
         </span>
         <span className={CHEVRON} aria-hidden>
           ▾
