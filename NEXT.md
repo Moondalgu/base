@@ -535,6 +535,46 @@ alphaTab은 렌더러라 편집을 대신 해주지 않으므로, 우리 `notes.
 | 구조 분할 | `sections.py` 있음. **끔** — 경계는 맞게 찾는데 결과가 나빠진다(7.5 참조) |
 | 회귀 | 코드 11건 / 하향 불변식 / 표기 / 조합 45개 / 정답 59마디 — 실패 0, 빌드 통과 |
 
+## ★ 다음 세션 최우선 (2026-08-10 중단 지점)
+
+### A-1. 운지 자리(현·프렛)가 사람 채보와 거의 안 맞는다 — 원인 규명
+- **증상**: AC/DC HTH 원곡(`data/a7b3735a1e06ccde`)을 표준 튜닝 정답
+  `eval/golden/songsterr_acdc_hth_estandard.json`(s2113901)과 대조하면
+  **피치클래스 87%인데 자리 4%(2/45)**. 사용자가 "아예 달라버려"라고 지적한
+  지점이 이것이다. 같은 음도 A2 = E현 5프렛 = A현 0프렛처럼 자리가 여럿이라,
+  피치가 맞아도 짚는 곳이 다르면 연주자가 그대로 못 친다.
+- **대조 명령**:
+  `eval/eval_songsterr.py data/a7b3735a1e06ccde eval/golden/songsterr_acdc_hth_estandard.json`
+- 확인할 것: 우리 `fretting.assign` 가중치가 사람 선택(개방현·저포지션 선호)과
+  어떻게 갈리는지. 드라우닝은 akbobada 참조 기준 운지 100%였으므로
+  **알고리즘이 아니라 이 곡/이 채보자의 관습 차이**일 수도 있다 — 먼저 재야 한다.
+- **주의(이번에 낸 실수)**: Songsterr에 같은 곡 탭이 여러 개 있고 **튜닝이
+  다르다.** s289는 E♭([42,37,32,27], 사운딩 A♭)이고 s2113901이 E 표준
+  ([43,38,33,28], 근음 A)이다. 표준 튜닝 탭이라야 자리 비교가 성립한다.
+  탭을 받을 때 `tuning` 필드를 먼저 확인할 것.
+
+### A-2. 두 베이스 겹침의 순효과 — 통제 실험(준비 완료, 실행만 남음)
+- 실제 연습 영상 vs 원곡 직접 비교는 **성립하지 않는다**(실측: baekyerin_live와
+  연습영상 반주가 다른 녹음 — 길이 320초 대 336초, 템포 76 대 71.8,
+  보컬 DTW 0.23). 백예린 Champagne Supernova는 스튜디오 음원 없이 라이브
+  버전이 여럿이라 연습영상이 참조한 녹음을 특정할 수 없었다.
+- 그래서 `tools/diag/make_overlay_take.py`로 **깨끗한 스템에서 두 번째 연주를
+  합성**해 통제 실험을 만들어 뒀다(Drowning 기준, 40ms 지연·음량 0.55·
+  3kHz 저역통과). 파일: `data/_overlay/65ef1cf020561a5c_{clean,overlay}.wav`
+- 남은 일: 두 파일을 같은 인자로 채보 → `tools/diag/compare_two_takes.py`로
+  대조 → 게이트 on/off까지 재면 **게이트의 존재 이유가 판정된다**.
+  ```
+  scripts/run_pipeline.py data/_overlay/65ef1cf020561a5c_clean.wav \
+      --skip-separate --beat-source data/65ef1cf020561a5c/source.wav --no-vocal
+  (overlay도 동일, 그 뒤 --cover-overlay 켠 판까지 3종 비교)
+  ```
+
+### A-3. Billie Jean 대조 (채보 완료, 대조 안 함)
+- `data/752cc5fcb58d957a` 채보 완료. 정답 `eval/golden/songsterr_mj_billie_jean.json`
+- **표준 튜닝 + 144마디 중 142마디(99%)에 베이스** — 지금까지 중 가장 좋은
+  시험대다(HTH는 47/95만 음이 있고 E♭이라 자리 비교 불가였다).
+  A-1의 자리 문제를 여기서 교차 확인할 것.
+
 ## 백로그 (2026-08-09 사용자 지시)
 
 ### B-1. 유튜브 서비스 분석 → 클론 (베이스 초보 기능) [분석 완료 2026-08-09]
