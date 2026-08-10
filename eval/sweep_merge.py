@@ -29,17 +29,20 @@ from run_goldenset import SONGS  # noqa: E402
 
 
 def rebuild(workdir: Path, ratio: float, gap: float,
-            short_beats: float | None = None) -> str | None:
+            short_beats: float | None = None,
+            source: str = "raw") -> str | None:
     """병합 임계를 바꿔 다시 조립한 alphaTex. 원본 파일은 건드리지 않는다.
 
     `notes_raw.json`은 **clean을 이미 거친**(게이트 전) 산출물이라 채보
     원본이 아니다. 우리가 고치려는 것은 "병합이 덜 됐다"이므로 그 위에 병합
     단계만 더 세게 다시 적용하면 된다 — 재채보(곡당 8분)가 필요 없다.
     """
-    raw = workdir / "notes_raw.json"
-    if not raw.exists():
+    # raw = 음량 게이트 **전**(notes_raw.json), clean = 게이트 후(notes.json).
+    # 같은 조립 경로에서 이 둘만 갈아끼우면 게이트의 순효과가 분리된다.
+    src = workdir / ("notes_raw.json" if source == "raw" else "notes.json")
+    if not src.exists():
         return None
-    notes = bassclean.load_notes(raw)
+    notes = bassclean.load_notes(src)
     manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
     grid = beats_mod.BeatGrid.from_json(workdir / "beats.json")
     # 짧은 앞음 임계는 박 길이에 비례한다 — 느린 곡의 16분과 빠른 곡의 16분은
@@ -80,7 +83,10 @@ def main() -> None:
     ap.add_argument("--gaps", default="0.04")
     ap.add_argument("--short", default="none",
                     help="짧은 앞음 임계(박). none이면 이 판별자를 끈다")
+    ap.add_argument("--source", default="raw", choices=["raw", "clean", "both"],
+                    help="raw=게이트 전, clean=게이트 후, both=둘 다 채점")
     args = ap.parse_args()
+    sources = ["raw", "clean"] if args.source == "both" else [args.source]
 
     ratios = [float(x) for x in args.ratios.split(",")]
     gaps = [float(x) for x in args.gaps.split(",")]
@@ -88,17 +94,19 @@ def main() -> None:
               for x in args.short.split(",")]
 
     rows = []
-    for short in shorts:
-      for gap in gaps:
-        for ratio in ratios:
-            line = {"ratio": ratio, "gap": gap, "short": short, "songs": {}}
+    for source in sources:
+      for short in shorts:
+        for gap in gaps:
+          for ratio in ratios:
+            line = {"ratio": ratio, "gap": gap, "short": short,
+                    "source": source, "songs": {}}
             for name, h, golden in SONGS:
                 wd = ROOT / "data" / h
                 gp = ROOT / "eval" / "golden" / golden
                 if not (wd / "notes_raw.json").exists() or not gp.exists():
                     continue
                 try:
-                    tex = rebuild(wd, ratio, gap, short)
+                    tex = rebuild(wd, ratio, gap, short, source)
                     if tex is None:
                         continue
                     line["songs"][name] = score(wd, gp, tex)
@@ -113,7 +121,8 @@ def main() -> None:
                 else f"{n[:12]} ERR"
                 for n, v in line["songs"].items()
             )
-            print(f"ratio={ratio} short={short}: {cells}", flush=True)
+            gate = "게이트전" if source == "raw" else "게이트후"
+            print(f"[{gate}] short={short}: {cells}", flush=True)
 
 
 if __name__ == "__main__":
