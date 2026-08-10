@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -38,14 +39,38 @@ sys.path.insert(0, str(ROOT / "apps" / "worker"))
 from pipeline import alphatex  # noqa: E402
 
 
+# 노트 토큰. alphaTex 문법(실측 확정, docs/tech/bass-techniques.md):
+#   프렛.현            길이 생략 = 앞 길이 유지
+#   프렛.현.길이
+#   프렛.현{fx}.길이   이펙트는 **현 뒤**에만 유효(sl/h/g/v/pm/st …)
+#   -.현.길이          타이(적히지만 뜯지 않는다)
+#   x.현.길이          데드 노트 — 뜯는 소리이므로 타현으로 센다
+# 쉼표는 `r.길이`라 현 자리가 없어 이 패턴에 안 걸린다(의도된 배제).
+_NOTE_RE = re.compile(
+    r"(?<![\w.)}])(-|x|\d+)\.(\d+)(?:\{[^}]*\})?(?:\.(\d+))?(?![\w.])"
+)
+# 마디 분할 전에 지워야 하는 것들 — 이것들이 남으면 마지막 마디가 오염된다.
+_SYNC_RE = re.compile(r"^\s*\\sync\b.*$", re.MULTILINE)
+_COMMENT_RE = re.compile(r"//[^\n]*")
+
+
 def our_bars(tex: str, subdivision: int) -> dict[int, dict]:
     """AlphaTex를 마디별 (타현 목록)으로 되돈다. 마디 번호는 1부터.
 
     타현만 센다 — 이어짐(`-.현.길이`)과 쉼표(`r.길이`)는 타현이 아니다.
+    데드 노트(`x.현.길이`)는 실제로 뜯는 소리이므로 타현에 넣되, 음정이
+    없으므로 자리는 (현, None)으로 둔다.
 
     **3단 악보 대응**: `\\track`이 여러 개면 베이스 트랙(`\\staff{score tabs}`가
     있는 트랙)만 읽는다. 트랙을 무시하고 전체를 이어 붙이면 보컬 마디가 앞에
     끼어들어 마디 번호가 통째로 밀린다(2026-08-08, 3단 도입과 함께 수정).
+    드럼 트랙(`\\staff{score} \\instrument "percussion"`)은 tabs가 없어 같은
+    필터로 걸러진다.
+
+    **문자열 분할이 아니라 문법으로 읽는다.** 예전에는 공백으로 자른 토큰을
+    점으로 쪼개 판정했는데, 그러면 `\\sync (0 0 820 0.0)`의 `0.0)`이 노트처럼
+    보여서 마지막 마디의 written이 8 대신 96으로 부풀었다(실측). 이펙트가 붙은
+    `5.4{sl}.8`이나 화음 `(5.4 7.3).4`도 통째로 놓쳤다.
     """
     body = tex.split("\n.", 1)[-1] if "\n." in tex else tex
     if "\\track" in body:
@@ -53,28 +78,20 @@ def our_bars(tex: str, subdivision: int) -> dict[int, dict]:
         bass_segs = [s for s in segments if "\\staff{score tabs}" in s]
         if bass_segs:
             body = bass_segs[-1]
+    # sync 지점과 주석은 마디 구분자(|)를 갖지 않지만 마지막 마디 뒤에 붙어
+    # 그 마디에 섞인다. 마디를 나누기 전에 지운다.
+    body = _COMMENT_RE.sub(" ", _SYNC_RE.sub(" ", body))
+
     result: dict[int, dict] = {}
     for i, raw in enumerate(body.split("|"), start=1):
-        attacks: list[tuple[int, int]] = []      # (현, 프렛)
+        attacks: list[tuple[int, int | None]] = []   # (현, 프렛). 데드는 프렛 None
         written = 0
-        for token in raw.split():
-            if token.startswith("\\") or token.startswith("."):
-                continue
-            parts = token.split(".")
-            if len(parts) < 2:
-                continue
-            head = parts[0]
-            if head.startswith("r"):             # 쉼표
-                continue
+        for m in _NOTE_RE.finditer(raw):
+            head, string = m.group(1), int(m.group(2))
             written += 1
-            if head.startswith("-"):             # 타이 — 적히지만 뜯지 않는다
+            if head == "-":                  # 타이 — 적히지만 뜯지 않는다
                 continue
-            try:
-                fret = int(head)
-                string = int(parts[1])
-            except ValueError:
-                continue
-            attacks.append((string, fret))
+            attacks.append((string, None if head == "x" else int(head)))
         if attacks or written:
             result[i] = {"attacks": attacks, "written": written}
     return result
