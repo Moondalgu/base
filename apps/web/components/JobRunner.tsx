@@ -36,6 +36,9 @@ export default function JobRunner() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [tuning, setTuning] = useState("standard");
+  // 원곡 위에 연주한 커버 영상인지. 켜면 음량 게이트가 작은 쪽(스피커로
+  // 흘러나온 원곡 베이스)을 버린다. 오디오만으로는 가려낼 수 없어서 묻는다.
+  const [coverOverlay, setCoverOverlay] = useState(false);
   const [running, setRunning] = useState(false);
   const [stages, setStages] = useState<StageState[]>([]);
   const [progress, setProgress] = useState(0);
@@ -109,15 +112,15 @@ export default function JobRunner() {
           res = await fetch(`${WORKER}/api/jobs`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ source: url, tuning }),
+            body: JSON.stringify({ source: url, tuning, coverOverlay }),
           });
         } else {
           const form = new FormData();
           form.append("file", body.file);
-          res = await fetch(`${WORKER}/api/upload?tuning=${tuning}`, {
-            method: "POST",
-            body: form,
-          });
+          res = await fetch(
+            `${WORKER}/api/upload?tuning=${tuning}&coverOverlay=${coverOverlay}`,
+            { method: "POST", body: form },
+          );
         }
 
         if (!res.ok) {
@@ -139,7 +142,7 @@ export default function JobRunner() {
         setRunning(false);
       }
     },
-    [url, tuning, follow, router],
+    [url, tuning, coverOverlay, follow, router],
   );
 
   return (
@@ -196,6 +199,23 @@ export default function JobRunner() {
           </button>
         ))}
       </div>
+
+      <label className="flex cursor-pointer items-start gap-2.5 text-xs">
+        <input
+          type="checkbox"
+          checked={coverOverlay}
+          onChange={(e) => setCoverOverlay(e.target.checked)}
+          disabled={running}
+          className="mt-0.5 h-3.5 w-3.5 accent-amber-500"
+        />
+        <span className="text-neutral-600 dark:text-neutral-400">
+          원곡을 틀어놓고 그 위에 연주한 <strong>커버 영상</strong>입니다
+          <span className="mt-0.5 block text-[11px] text-neutral-400 dark:text-neutral-500">
+            베이스가 두 대 섞인 소리에서 작게 녹음된 원곡 쪽을 걸러냅니다.
+            일반 음원·공식 뮤비라면 꺼두세요.
+          </span>
+        </span>
+      </label>
 
       {running && (
         <div className={`${CARD} space-y-3 p-4`}>

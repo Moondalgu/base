@@ -38,6 +38,11 @@ def main() -> int:
         action="store_true",
         help="입력이 이미 베이스 단독 음원일 때 Demucs를 건너뛴다",
     )
+    parser.add_argument(
+        "--cover-overlay", action="store_true",
+        help="원곡을 틀어놓고 그 위에 연주한 커버 영상이다 — 음량 게이트를 건다. "
+             "오디오만으로는 가려낼 수 없어서 입력으로 받는다(bassclean 주석)",
+    )
     parser.add_argument("--no-sync", action="store_true", help="sync 포인트 생략")
     parser.add_argument(
         "--no-vocal", action="store_true",
@@ -129,9 +134,18 @@ def main() -> int:
     # beats_per_bar를 넘긴다. 게이트는 마디마다 같은 비율로 깎는데(한 마디를
     # 통째로 비우지 않기 위해) 기본값 4로 두면 4/4가 아닌 곡에서 마디 경계가
     # 어긋난다.
-    cleaned, gate_report = bassclean.gate_by_loudness(
-        cleaned, grid.beats, beats_per_bar=grid.beats_per_bar, verbose=True
-    )
+    # 워커 경로(jobs.py)와 같은 규칙: 사용자가 커버 영상이라고 알려줬을 때만
+    # 건다. 자동 판정은 스튜디오 원곡에서 오발동해 멀쩡한 음을 버렸다.
+    if args.cover_overlay:
+        cleaned, gate_report = bassclean.gate_by_loudness(
+            cleaned, grid.beats, beats_per_bar=grid.beats_per_bar, verbose=True
+        )
+    else:
+        gate_report = bassclean.LoudnessGateReport(
+            applied=False, dropped=0, kept=len(cleaned), threshold=0.0,
+            grid_before=0.0, grid_after=0.0,
+            reason="커버 영상으로 표시되지 않아 게이트를 걸지 않았다",
+        )
 
     # 입력이 연습 영상(베이스 둘)인지 판정한다. 게이트를 건 뒤의 정렬로 본다.
     input_diagnosis = diagnose.diagnose(

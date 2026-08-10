@@ -52,6 +52,9 @@ class Job:
     source: str
     tuning: str
     content_hash: str | None = None
+    # 원곡을 틀어놓고 그 위에 연주한 커버 영상인가. 사용자가 입력할 때
+    # 알려준다 — 우리는 이것을 오디오만 보고 가려내지 못한다(게이트 주석 참조).
+    cover_overlay: bool = False
     status: str = "queued"  # queued | running | done | failed
     error: str | None = None
     events: asyncio.Queue = field(default_factory=asyncio.Queue)
@@ -328,8 +331,10 @@ def _load_chords(path: Path, transpose: int) -> list[str] | None:
     return out
 
 
-def create_job(source: str, tuning: str = "standard") -> Job:
-    job = Job(id=uuid.uuid4().hex[:12], source=source, tuning=tuning)
+def create_job(source: str, tuning: str = "standard",
+               cover_overlay: bool = False) -> Job:
+    job = Job(id=uuid.uuid4().hex[:12], source=source, tuning=tuning,
+              cover_overlay=cover_overlay)
     _JOBS[job.id] = job
     job.task = asyncio.create_task(_run(job))
     return job
@@ -407,11 +412,30 @@ async def _run(job: Job) -> None:
         # 정답으로 채점할 수 있어야 하는데, 후처리 결과만 저장하면 그 비교가
         # 영원히 불가능해진다(실제로 막혔다).
         bassclean.save_notes(cleaned, workdir / "notes_raw.json")
-        # beats_per_bar를 넘긴다 — 기본값 4로 두면 4/4가 아닌 곡에서 게이트의
-        # 마디 경계가 어긋난다 (CLI 경로와 같은 호출로 유지).
-        cleaned, gate_report = bassclean.gate_by_loudness(
-            cleaned, grid.beats, beats_per_bar=grid.beats_per_bar
-        )
+        # 음량 게이트는 **사용자가 커버 영상이라고 알려줬을 때만** 건다.
+        #
+        # 예전에는 격자 정렬률로 "베이스가 둘 섞였다"를 자동 판정했는데, 정렬이
+        # 나쁜 이유는 둘이다 — 정말 둘이 섞였거나, 그냥 우리 검출이 나쁘거나.
+        # 우리는 그 둘을 가르지 못한다(diagnose가 이미 같은 이유로 판정을
+        # 버렸다). 그 결과 스튜디오 원곡에서도 발동해 멀쩡한 음을 버렸고,
+        # 골든셋 채점에서 발동한 곡마다 타현 정확도가 무너졌다:
+        # Come Together −32pp, Champagne −23pp, Highway to Hell −23pp,
+        # Queen −10pp. 발동하지 않은 곡(Drowning·VI)은 변화가 정확히 0이라
+        # 이 손실은 전부 게이트 탓이다.
+        #
+        # 판정을 사람에게 넘긴다. 자기 영상이 "원곡 틀어놓고 그 위에 연주한
+        # 것"인지는 올린 사람이 안다. beats_per_bar를 넘기는 이유는 기본값 4로
+        # 두면 4/4가 아닌 곡에서 게이트의 마디 경계가 어긋나기 때문이다.
+        if job.cover_overlay:
+            cleaned, gate_report = bassclean.gate_by_loudness(
+                cleaned, grid.beats, beats_per_bar=grid.beats_per_bar
+            )
+        else:
+            gate_report = bassclean.LoudnessGateReport(
+                applied=False, dropped=0, kept=len(cleaned), threshold=0.0,
+                grid_before=0.0, grid_after=0.0,
+                reason="커버 영상으로 표시되지 않아 게이트를 걸지 않았다",
+            )
 
         # 입력이 연습 영상(베이스 둘)인지 판정한다. 게이트를 **건 뒤**의 정렬로
         # 봐야 한다 — 게이트 전 값으로 보면 게이트가 해결한 곡까지 몰린다.
@@ -517,8 +541,9 @@ async def _run(job: Job) -> None:
             "phase": qscore.phase,
             "phaseCorrected": qscore.phase_corrected,
             "quality": report.to_dict(),
-            # 음량 게이트가 걸렸으면 그 곡은 두 연주가 섞인 입력일 가능성이
-            # 높다. 사용자에게 알려야 하고, 나중에 결과를 해석할 때도 필요하다.
+            # 음량 게이트는 사용자가 커버 영상이라고 표시했을 때만 걸린다.
+            # 어느 쪽이었는지 남겨야 나중에 결과를 해석할 수 있다.
+            "coverOverlay": job.cover_overlay,
             "loudnessGate": gate_report.to_dict(),
         }
         (workdir / "manifest.json").write_text(

@@ -36,6 +36,9 @@ UPLOADS = jobs.DATA / "_uploads"
 class JobRequest(BaseModel):
     source: str
     tuning: str = "standard"
+    # 원곡을 틀어놓고 그 위에 연주한 커버 영상인가. True일 때만 음량 게이트가
+    # 걸린다 — 오디오만으로는 가려낼 수 없어서 사용자에게 묻는다(jobs.py 주석).
+    coverOverlay: bool = False
 
 
 @app.get("/health")
@@ -49,12 +52,13 @@ async def create_job(req: JobRequest) -> dict:
     if cached:
         return {"jobId": None, "contentHash": cached, "cached": True}
 
-    job = jobs.create_job(req.source, req.tuning)
+    job = jobs.create_job(req.source, req.tuning, req.coverOverlay)
     return {"jobId": job.id, "contentHash": None, "cached": False}
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...), tuning: str = "standard") -> dict:
+async def upload(file: UploadFile = File(...), tuning: str = "standard",
+                 coverOverlay: bool = False) -> dict:
     """파일을 받아 저장하고 잡을 만든다."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
@@ -68,7 +72,7 @@ async def upload(file: UploadFile = File(...), tuning: str = "standard") -> dict
     if cached:
         return {"jobId": None, "contentHash": cached, "cached": True}
 
-    job = jobs.create_job(str(target), tuning)
+    job = jobs.create_job(str(target), tuning, coverOverlay)
     return {"jobId": job.id, "contentHash": None, "cached": False}
 
 
