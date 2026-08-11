@@ -31,6 +31,7 @@ const SCORE_HEADERS = [
   "x-score-transpose",
   "x-score-octave-folded",
   "x-score-subdivision-forced",
+  "x-score-key",
 ];
 
 export async function GET(

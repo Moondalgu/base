@@ -45,6 +45,10 @@ class BuiltScore:
     # 음표 배치 원장 — 모든 음의 [검출 시각→슬롯→박 위치→피치 출처→현/프렛].
     # "박자에 맞게 들어갔는가"를 데이터로 답한다 (pipeline/ledger.py 머리말).
     ledger: list[dict] = None  # type: ignore[assignment]
+    # 이 악보에 실제로 찍힌 조표 이름(이조가 반영된 값). 조성을 모르거나
+    # 확신이 없으면 None이다. 화면에서 "지금 무슨 키인가"를 이 값으로 말한다 —
+    # 프론트가 이름표를 따로 만들면 조표 표기 규칙이 두 벌이 되어 갈라진다.
+    key_signature: str | None = None
 
 
 def build(
@@ -170,6 +174,7 @@ def build(
         subdivision_forced=subdivision_forced,
         reduction=reduction,
         ledger=note_ledger,
+        key_signature=key_signature,
     )
 
 

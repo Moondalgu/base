@@ -136,16 +136,10 @@ def main() -> int:
     # 어긋난다.
     # 워커 경로(jobs.py)와 같은 규칙: 사용자가 커버 영상이라고 알려줬을 때만
     # 건다. 자동 판정은 스튜디오 원곡에서 오발동해 멀쩡한 음을 버렸다.
-    if args.cover_overlay:
-        cleaned, gate_report = bassclean.gate_by_loudness(
-            cleaned, grid.beats, beats_per_bar=grid.beats_per_bar, verbose=True
-        )
-    else:
-        gate_report = bassclean.LoudnessGateReport(
-            applied=False, dropped=0, kept=len(cleaned), threshold=0.0,
-            grid_before=0.0, grid_after=0.0,
-            reason="커버 영상으로 표시되지 않아 게이트를 걸지 않았다",
-        )
+    cleaned, gate_report = bassclean.apply_gate(
+        cleaned, grid.beats,
+        enabled=args.cover_overlay, beats_per_bar=grid.beats_per_bar, verbose=True,
+    )
 
     # 입력이 연습 영상(베이스 둘)인지 판정한다. 게이트를 건 뒤의 정렬로 본다.
     input_diagnosis = diagnose.diagnose(

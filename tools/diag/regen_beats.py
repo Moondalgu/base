@@ -34,11 +34,16 @@ def rebuild_from_raw(
     *,
     grid: "beats.BeatGrid | None" = None,
     tuning: str = "standard",
+    cover_overlay: bool | None = None,
 ) -> dict:
     """notes_raw.json에서 게이트→코드→악보→품질→manifest까지 재조립한다.
 
     grid를 주지 않으면 기존 beats.json을 읽는다. manifest를 갱신해 저장하고
     그 dict를 돌려준다.
+
+    cover_overlay를 주지 않으면 manifest에 적힌 값을 따른다. 이 도구가 웹과
+    다른 악보를 만들지 않게 하려는 것이다 — 여기서 게이트를 강제하면 같은 곡을
+    재조립할 때마다 사용자가 끈 게이트가 되살아난다.
     """
     raw_path = workdir / "notes_raw.json"
     bass_stem = workdir / "stems" / "bass.wav"
@@ -49,9 +54,12 @@ def rebuild_from_raw(
         grid = beats.BeatGrid.from_json(workdir / "beats.json")
 
     # 1) 게이트부터 다시 (게이트는 grid.beats_per_bar에 의존한다)
+    if cover_overlay is None:
+        cover_overlay = bool(manifest.get("coverOverlay", False))
     cleaned = bassclean.load_notes(raw_path)
-    cleaned, gate_report = bassclean.gate_by_loudness(
-        cleaned, grid.beats, beats_per_bar=grid.beats_per_bar, verbose=True
+    cleaned, gate_report = bassclean.apply_gate(
+        cleaned, grid.beats,
+        enabled=cover_overlay, beats_per_bar=grid.beats_per_bar, verbose=True,
     )
     input_diagnosis = diagnose.diagnose(
         gate_applied=gate_report.applied,

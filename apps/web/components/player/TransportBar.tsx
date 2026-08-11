@@ -1,6 +1,7 @@
 "use client";
 
 import { chip, toggleChip, DIVIDER, NUM, SLIDER, SLIDER_ACCENT, STEPPER } from "../ui";
+import { TRANSPOSE_LIMIT, TRANSPOSE_WARN } from "./ScoreControls";
 
 interface Props {
   playing: boolean;
@@ -8,6 +9,8 @@ interface Props {
   duration: number;
   rate: number;
   semitones: number;
+  /** 지금 악보에 찍힌 조표 이름(이조 반영). 조성을 못 찾았으면 빈 문자열 */
+  keyName?: string;
   /** A-B 구간. 아직 안 찍었으면 null */
   loopStart: number | null;
   loopEnd: number | null;
@@ -51,6 +54,7 @@ export default function TransportBar({
   duration,
   rate,
   semitones,
+  keyName,
   loopStart,
   loopEnd,
   metronome,
@@ -151,20 +155,56 @@ export default function TransportBar({
 
           <span className={DIVIDER} aria-hidden />
 
+          {/* 키 — 재생 피치와 악보가 **함께** 움직인다. 컨트롤이 하나뿐이라
+              둘이 어긋날 수 없다. 연주 중에 손이 가는 값이라 접이식 패널이
+              아니라 여기(하단 고정 바)에 둔다. */}
           <div
             className="flex items-center gap-1.5"
-            title="피치는 반음 단위로 따로 조절합니다."
+            title={
+              "반음 단위로 곡 전체를 옮깁니다. 소리와 악보가 같이 움직입니다." +
+              (Math.abs(semitones) >= TRANSPOSE_WARN
+                ? " 반음만 내릴 것이라면 악보 설정에서 튜닝을 내리는 쪽이 낫습니다 — 운지가 그대로 유지됩니다."
+                : "")
+            }
           >
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">피치</span>
-            <button onClick={() => onSemitones(semitones - 1)} className={STEPPER} aria-label="피치 내리기">
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">키</span>
+            <button
+              onClick={() => onSemitones(semitones - 1)}
+              disabled={semitones <= -TRANSPOSE_LIMIT}
+              className={`${STEPPER} disabled:cursor-not-allowed disabled:opacity-40`}
+              aria-label="키 내리기"
+            >
               −
             </button>
-            <span className={`${NUM} w-7 text-center`}>
-              {semitones > 0 ? `+${semitones}` : semitones}
+            {/* 조표 이름이 있으면 그것을 보여준다. 반음 수(+2)는 지금 무슨
+                키인지 알려주지 않는다. 조성을 못 찾은 곡에서는 반음 수로 되돌린다. */}
+            <span
+              className={`${NUM} min-w-[3.25rem] text-center`}
+              aria-label={keyName ? `현재 키 ${keyName}` : undefined}
+            >
+              {keyName || (semitones > 0 ? `+${semitones}` : String(semitones))}
+              {keyName && semitones !== 0 && (
+                <span className="ml-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                  {semitones > 0 ? `+${semitones}` : semitones}
+                </span>
+              )}
             </span>
-            <button onClick={() => onSemitones(semitones + 1)} className={STEPPER} aria-label="피치 올리기">
+            <button
+              onClick={() => onSemitones(semitones + 1)}
+              disabled={semitones >= TRANSPOSE_LIMIT}
+              className={`${STEPPER} disabled:cursor-not-allowed disabled:opacity-40`}
+              aria-label="키 올리기"
+            >
               +
             </button>
+            {semitones !== 0 && (
+              <button
+                onClick={() => onSemitones(0)}
+                className="text-[11px] text-neutral-500 underline-offset-2 hover:underline dark:text-neutral-400"
+              >
+                원래 키
+              </button>
+            )}
           </div>
 
           <span className={DIVIDER} aria-hidden />

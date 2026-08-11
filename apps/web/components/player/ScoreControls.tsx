@@ -11,7 +11,6 @@ import {
   PANEL_BODY,
   PANEL_SUMMARY,
   SLIDER,
-  STEPPER,
   chip,
 } from "../ui";
 
@@ -50,8 +49,8 @@ export const ORIGINAL_LEVEL = 3;
 
 /** 이조 한계(반음). 오디오 피치 시프트 품질이 이 밖에서 무너진다. */
 export const TRANSPOSE_LIMIT = 6;
-/** 이 이상 옮기면 소리가 눈에 띄게 상한다. */
-const TRANSPOSE_WARN = 3;
+/** 이 이상 옮기면 소리가 눈에 띄게 상한다. 하단 바의 키 컨트롤도 이 값을 쓴다. */
+export const TRANSPOSE_WARN = 3;
 
 const TUNINGS = [
   { key: "standard", label: "표준 EADG" },
@@ -101,7 +100,6 @@ interface Props {
   /** 단계를 하나만 주는 이유. 사용자에게 그대로 보여준다 */
   levelReason?: string;
   onLevel: (level: number) => void;
-  onTranspose: (semitones: number) => void;
   onTuning: (tuning: string) => void;
   /** 인쇄 창 열기. 악보가 아직 안 그려졌으면 없다 */
   onPrint?: () => void;
@@ -116,7 +114,6 @@ export default function ScoreControls({
   levels,
   levelReason,
   onLevel,
-  onTranspose,
   onTuning,
   onPrint,
 }: Props) {
@@ -125,7 +122,6 @@ export default function ScoreControls({
   // 사용자에게 "왜 안 움직이지"라는 질문만 만든다.
   const singleLevel = offered.length <= 1;
   const current = LEVELS.find((l) => l.level === level) ?? LEVELS[LEVELS.length - 1];
-  const clamp = (v: number) => Math.max(-TRANSPOSE_LIMIT, Math.min(TRANSPOSE_LIMIT, v));
 
   // 게이트가 걸렸는데도 정렬이 목표에 못 닿으면 두 연주가 완전히 갈리지 않은
   // 것이다. 그런 곡의 원곡 난이도는 타점을 믿을 수 없다.
@@ -210,48 +206,15 @@ export default function ScoreControls({
         </div>
 
         <div className="space-y-4">
-          <div className="space-y-2">
-            <span
-              className={`${FIELD_LABEL} ${HINT} block`}
-              title={`재생 음정과 악보가 함께 바뀝니다. 최대 ±${TRANSPOSE_LIMIT}반음.`}
-            >
-              키
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => onTranspose(clamp(transpose - 1))}
-                disabled={transpose <= -TRANSPOSE_LIMIT}
-                className={STEPPER}
-                aria-label="키 내리기"
-              >
-                −
-              </button>
-              <span className="w-9 text-center font-mono text-xs tabular-nums text-neutral-500">
-                {transpose > 0 ? `+${transpose}` : transpose}
-              </span>
-              <button
-                onClick={() => onTranspose(clamp(transpose + 1))}
-                disabled={transpose >= TRANSPOSE_LIMIT}
-                className={STEPPER}
-                aria-label="키 올리기"
-              >
-                +
-              </button>
-              {transpose !== 0 && (
-                <button
-                  onClick={() => onTranspose(0)}
-                  className="rounded-md px-2 py-1 text-xs text-neutral-500 transition hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                >
-                  원래 키로
-                </button>
-              )}
-            </div>
-            {Math.abs(transpose) >= TRANSPOSE_WARN && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                {`${Math.abs(transpose)}반음은 소리가 상할 수 있습니다. 반음만 내릴 것이라면 튜닝을 내리는 쪽이 낫습니다.`}
-              </p>
-            )}
-          </div>
+          {/* 키 조절은 하단 고정 바에 있다. 연주 중에 손이 가는 값이라 패널을
+              펼쳐야 닿는 자리에 두면 쓰이지 않고, 같은 상태를 만지는 컨트롤이
+              두 곳에 있으면 어느 쪽이 진짜인지 헷갈린다. 여기에는 이조 대신
+              쓸 수 있는 **튜닝**만 남긴다. */}
+          {Math.abs(transpose) >= TRANSPOSE_WARN && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {`키를 ${Math.abs(transpose)}반음 옮겼습니다 — 소리가 상할 수 있습니다. 반음만 내릴 것이라면 아래 튜닝을 내리는 쪽이 낫습니다.`}
+            </p>
+          )}
 
           <div className="space-y-2">
             <span

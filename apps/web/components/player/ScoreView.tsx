@@ -60,6 +60,13 @@ interface Props {
   onSourceChange?: (source: "auto" | "reference") => void;
   /** 악보 위 가로 드래그로 마디 구간 반복 (0-based 마디 인덱스, 양끝 포함) */
   onDragLoop?: (startBar: number, endBar: number) => void;
+  /**
+   * 지금 악보에 찍힌 조표 이름(이조 반영). 하단 바의 키 컨트롤이 이 값을 쓴다.
+   * 이름을 프론트에서 계산하지 않고 서버가 준 값을 흘려보내는 이유는, 조표
+   * 표기 규칙(나란한단조·플랫/샤프 선택)이 두 벌이 되면 악보와 이름표가
+   * 갈라지기 때문이다. 조성을 모르거나 확신이 없으면 빈 문자열이 온다.
+   */
+  onKeyName?: (name: string) => void;
 }
 
 /** 난이도 번호 → 표시 이름 (ScoreControls의 LEVELS와 같은 값) */
@@ -122,6 +129,7 @@ export default function ScoreView({
   onLevel,
   onSourceChange,
   onDragLoop,
+  onKeyName,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ExternalMediaBridge | null>(null);
@@ -599,6 +607,7 @@ export default function ScoreView({
           octaveFolded: Number(res.headers.get("x-score-octave-folded") ?? 0),
           fromStatic: res.headers.get("x-score-source") === "static",
         });
+        onKeyName?.(res.headers.get("x-score-key") ?? "");
         applyTex(tex);
       } catch (e) {
         if (!cancelled) {
@@ -610,7 +619,7 @@ export default function ScoreView({
     return () => {
       cancelled = true;
     };
-  }, [hash, level, transpose, tuning, applyTex, editsVersion, scoreSource]);
+  }, [hash, level, transpose, tuning, applyTex, editsVersion, scoreSource, onKeyName]);
 
   // 사용자 악보가 있는 곡인지 — 소스 토글 노출 여부. 곡이 바뀌면 다시 본다.
   useEffect(() => {

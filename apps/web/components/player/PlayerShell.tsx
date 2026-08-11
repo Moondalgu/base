@@ -72,6 +72,9 @@ export default function PlayerShell({ hash }: { hash: string }) {
   const [rate, setRate] = useState(1);
   // 재생 피치와 악보 이조는 같은 값이다. 상태를 하나만 두어 어긋날 수 없게 한다.
   const [semitones, setSemitones] = useState(0);
+  // 지금 악보에 찍힌 조표 이름. 워커가 이조를 반영해 내려주는 값을 그대로
+  // 들고 있다가 하단 바에 보여준다 (프론트에서 다시 계산하지 않는다).
+  const [keyName, setKeyName] = useState("");
   const [level, setLevel] = useState(ORIGINAL_LEVEL);
   const [tuning, setTuning] = useState("standard");
   const [gains, setGains] = useState<Gains>({ ...DEFAULT_GAINS });
@@ -419,6 +422,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         onLevel={setLevel}
         onSourceChange={setScoreSource}
         onDragLoop={handleDragLoop}
+        onKeyName={setKeyName}
         callbacks={{
           play: () => {
             void toggleTo(true);
@@ -457,7 +461,6 @@ export default function PlayerShell({ hash }: { hash: string }) {
               : manifest?.originalDifficulty?.reason
           }
           onLevel={setLevel}
-          onTranspose={handleSemitones}
           onTuning={setTuning}
           onPrint={scoreReady ? () => scoreControlRef.current?.print() : undefined}
         />
@@ -480,6 +483,7 @@ export default function PlayerShell({ hash }: { hash: string }) {
         duration={duration}
         rate={rate}
         semitones={semitones}
+        keyName={keyName}
         loopStart={loopStart}
         loopEnd={loopEnd}
         metronome={metronome}

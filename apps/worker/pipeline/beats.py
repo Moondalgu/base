@@ -49,6 +49,18 @@ PHASE_SEARCH_STEP = 0.01
 # 이보다 적은 마디로는 격자 품질을 판단할 수 없다.
 MIN_FIT_BARS = 8
 
+# 검출 비트 간격의 변동계수가 이보다 크면 **정렬 심사를 건너뛰고 균일 격자를
+# 쓴다.** 심사가 공정하지 않기 때문이다 — 검출 격자의 마디 시작은 검출 비트
+# 그 자체라 언제나 온셋 위에 앉는다. 마디 구조가 무너져도 거리 점수는 좋게
+# 나오므로 구조적으로 질 수 없는 심사다(HTH 실측: 검출 0.454s 대 균일 0.879s
+# 인데 마디는 87 대 99, 정답은 95).
+#
+# 값 0.5의 근거는 골든셋 8곡 실측 분포다. 정상 곡은 0.014~0.076에 몰려 있고
+# (라이브 커버 0.076이 최대) 비트를 흘린 HTH만 1.184로 15배 떨어져 있다.
+# 간격이 평균의 ±50%로 흩어진다는 것은 루바토가 아니라 비트 누락이다 —
+# 비트 하나를 놓치면 그 간격이 두 배가 된다.
+FORCE_UNIFORM_VARIANCE = 0.5
+
 
 @dataclass
 class BeatGrid:
@@ -198,7 +210,8 @@ def fit_uniform_grid(grid: BeatGrid, phase_source: Path, *, verbose: bool = Fals
         align_after=round(align_after, 4),
     )
 
-    if align_after >= align_before:
+    unstable = grid.bpm_variance >= FORCE_UNIFORM_VARIANCE
+    if align_after >= align_before and not unstable:
         # 검출 격자가 이미 더 잘 맞는다. 균일 격자를 강요하면 오히려 밀린다.
         if verbose:
             print(
@@ -206,6 +219,11 @@ def fit_uniform_grid(grid: BeatGrid, phase_source: Path, *, verbose: bool = Fals
                 f"(정렬오차 {align_before:.3f}s vs {align_after:.3f}s)"
             )
         return measured
+    if unstable and verbose:
+        print(
+            f"[beats] 검출 비트 간격이 불안정(변동 {grid.bpm_variance:.3f}) — "
+            f"정렬 심사를 건너뛰고 균일 격자를 쓴다"
+        )
 
     beats, downbeats = _uniform_beats(anchor + phase, bpm, bpb, grid.beats[-1])
     if len(beats) < bpb + 1 or len(downbeats) < 2:

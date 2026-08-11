@@ -504,6 +504,41 @@ def _bar_of(start: float, beats: list[float], beats_per_bar: int) -> int:
     return i // max(1, beats_per_bar)
 
 
+def apply_gate(
+    notes: list[Note],
+    beats: list[float],
+    *,
+    enabled: bool,
+    beats_per_bar: int = 4,
+    verbose: bool = False,
+) -> tuple[list[Note], LoudnessGateReport]:
+    """게이트를 걸지 말지까지 포함한 입구. 노트를 만드는 경로는 전부 여기로 온다.
+
+    게이트는 자동 판정이 아니라 **사용자가 커버 영상이라고 알려줬을 때만** 건다.
+    자동 판정은 스튜디오 원곡에서 오발동해 멀쩡한 음을 버렸다 — 골든셋 채점에서
+    발동한 곡마다 타현 정확도가 무너졌다(Come Together −32pp, Champagne −23pp,
+    Highway to Hell −23pp, Queen −10pp).
+
+    그 판단을 부르는 쪽마다 따로 적으면 한 곳을 고칠 때 나머지가 옛 동작으로
+    남는다. 실제로 그랬다 — 워커·CLI는 옵트인으로 바뀌었는데 재조립 도구
+    두 개(regen_beats·refresh_manifest)가 게이트를 계속 강제해서, 같은 곡을
+    도구로 다시 만들면 웹과 다른 악보가 나왔다.
+    """
+    if enabled:
+        return gate_by_loudness(
+            notes, beats, beats_per_bar=beats_per_bar, verbose=verbose
+        )
+    # 게이트를 걸지 않아도 **정렬률은 잰다.** diagnose가 이 값으로 리듬 신뢰를
+    # 판정하고, reduce가 그 판정으로 중급 단계를 열지 정한다. 0으로 채워두면
+    # 게이트를 끈 곡이 전부 "리듬 불신"으로 떨어져 하향 단계가 초급만 남는다.
+    ratio = _grid_ratio(notes, beats)
+    return notes, LoudnessGateReport(
+        applied=False, dropped=0, kept=len(notes), threshold=0.0,
+        grid_before=ratio, grid_after=ratio,
+        reason="커버 영상으로 표시되지 않아 게이트를 걸지 않았다",
+    )
+
+
 def gate_by_loudness(
     notes: list[Note],
     beats: list[float],

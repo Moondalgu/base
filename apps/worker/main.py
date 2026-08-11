@@ -146,6 +146,8 @@ async def score_variant(
             "X-Score-Transpose": str(built.transpose),
             "X-Score-Octave-Folded": str(built.octave_folded),
             "X-Score-Subdivision-Forced": "1" if built.subdivision_forced else "0",
+            # 이조가 반영된 조표 이름. 화면 키 컨트롤이 이 값을 그대로 보여준다.
+            "X-Score-Key": built.key_signature or "",
             "Cache-Control": "no-store",
         },
     )

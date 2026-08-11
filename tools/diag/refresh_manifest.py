@@ -56,8 +56,10 @@ def main() -> int:
         stem_for_loudness = workdir / "stems" / "bass.wav"
         if stem_for_loudness.exists() and all(n.loudness <= 0 for n in raw):
             bassclean.measure_loudness(raw, stem_for_loudness)
-        notes, gate_report = bassclean.gate_by_loudness(
-            raw, grid.beats, beats_per_bar=grid.beats_per_bar
+        notes, gate_report = bassclean.apply_gate(
+            raw, grid.beats,
+            enabled=bool(manifest.get("coverOverlay", False)),
+            beats_per_bar=grid.beats_per_bar,
         )
         bassclean.save_notes(notes, notes_path)
         manifest["loudnessGate"] = gate_report.to_dict()

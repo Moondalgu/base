@@ -1,4 +1,4 @@
-"""골든셋 일괄 회귀 — 6곡을 한 번에 재고 표로 낸다.
+"""골든셋 일괄 회귀 — 등록된 곡을 한 번에 재고 표로 낸다.
 
 파이프라인을 고칠 때마다 이것을 돌린다. 곡 하나로 보면 과적합을 못 잡는다
 (16마디 100% → 59마디 63% 전례). 피치클래스가 3%p 이상 떨어지면 회귀다.
@@ -34,10 +34,14 @@ SONGS = [
     ("Virtual Insanity", "d4fd7b689b9db1bb", "songsterr_jamiroquai_virtual_insanity.json"),
     ("Drowning", "65ef1cf020561a5c", "songsterr_woodz_drowning.json"),
     ("예뻤어", "8181e1aa7d7a0be1", "songsterr_day6_ywb.json"),
-    # 이 탭은 E♭튜닝(사운딩 A♭)이라 원곡 스튜디오 녹음(A장조)보다 반음 낮다.
-    # 이조 자동 탐색이 그 −1을 찾아내야 한다 — 못 찾으면 지표가 아니라
-    # 도구 문제다(골든셋 "결함 0"과 같은 종류).
+    # 같은 곡에 탭이 둘이고 **튜닝이 다르다.** 둘 다 두는 이유가 다르다.
+    #  - E♭탭(s289, 사운딩 A♭)은 원곡(A장조)보다 반음 낮다. 이조 자동 탐색이
+    #    그 차이를 찾아내는지 보는 자리다 — 못 찾으면 지표가 아니라 도구
+    #    문제다(골든셋 "결함 0"과 같은 종류).
+    #  - 표준튜닝 탭(s2113901)은 **자리(현·프렛)를 잴 수 있는 유일한 쪽**이다.
+    #    이조가 걸리면 짚는 자리가 달라져 자리 비교가 통째로 꺼진다.
     ("Highway to Hell", "a7b3735a1e06ccde", "songsterr_acdc_hth_bass.json"),
+    ("HTH(표준튜닝·자리)", "a7b3735a1e06ccde", "songsterr_acdc_hth_estandard.json"),
     # 같은 곡 여성 보컬 커버(First To Eleven). 실측상 원곡 −1반음 = 탭과 동일 키.
     ("HTH 커버(F2E)", "2c80d86eb66dd69a", "songsterr_acdc_hth_bass.json"),
 ]

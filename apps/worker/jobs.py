@@ -426,16 +426,10 @@ async def _run(job: Job) -> None:
         # 판정을 사람에게 넘긴다. 자기 영상이 "원곡 틀어놓고 그 위에 연주한
         # 것"인지는 올린 사람이 안다. beats_per_bar를 넘기는 이유는 기본값 4로
         # 두면 4/4가 아닌 곡에서 게이트의 마디 경계가 어긋나기 때문이다.
-        if job.cover_overlay:
-            cleaned, gate_report = bassclean.gate_by_loudness(
-                cleaned, grid.beats, beats_per_bar=grid.beats_per_bar
-            )
-        else:
-            gate_report = bassclean.LoudnessGateReport(
-                applied=False, dropped=0, kept=len(cleaned), threshold=0.0,
-                grid_before=0.0, grid_after=0.0,
-                reason="커버 영상으로 표시되지 않아 게이트를 걸지 않았다",
-            )
+        cleaned, gate_report = bassclean.apply_gate(
+            cleaned, grid.beats,
+            enabled=job.cover_overlay, beats_per_bar=grid.beats_per_bar,
+        )
 
         # 입력이 연습 영상(베이스 둘)인지 판정한다. 게이트를 **건 뒤**의 정렬로
         # 봐야 한다 — 게이트 전 값으로 보면 게이트가 해결한 곡까지 몰린다.

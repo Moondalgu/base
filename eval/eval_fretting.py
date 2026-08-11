@@ -68,20 +68,26 @@ def score_weights(
     w_string: float,
     w_position: float,
     w_open: float,
+    w_thin_string: float | None = None,
 ) -> dict:
     """가중치 한 조합으로 전 곡의 운지를 채점한다.
 
     정답 피치 열을 그대로 DP에 넣는다 — 채보 오차를 섞지 않고 **운지 로직만**
     재기 위해서다.
+
+    `w_thin_string`을 받는 이유: 이 가중치가 뒤에 추가됐는데 여기 빠져 있어서
+    스윕이 그 축을 못 봤다. 고정된 축을 최적이라고 보고하면 없는 최적을 만든다.
     """
     saved = (
         fretting.W_MOVE, fretting.W_STRING_CHANGE,
-        fretting.W_POSITION, fretting.W_OPEN_PENALTY,
+        fretting.W_POSITION, fretting.W_OPEN_PENALTY, fretting.W_THIN_STRING,
     )
     fretting.W_MOVE = w_move
     fretting.W_STRING_CHANGE = w_string
     fretting.W_POSITION = w_position
     fretting.W_OPEN_PENALTY = w_open
+    if w_thin_string is not None:
+        fretting.W_THIN_STRING = w_thin_string
     try:
         exact = string_ok = total = 0
         fret_err = 0
@@ -109,7 +115,7 @@ def score_weights(
     finally:
         (
             fretting.W_MOVE, fretting.W_STRING_CHANGE,
-            fretting.W_POSITION, fretting.W_OPEN_PENALTY,
+            fretting.W_POSITION, fretting.W_OPEN_PENALTY, fretting.W_THIN_STRING,
         ) = saved
 
 
