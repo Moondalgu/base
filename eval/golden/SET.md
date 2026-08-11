@@ -23,19 +23,65 @@
 
 그래서 아래 3곡은 **Songsterr 채보와 같은 스튜디오 녹음**을 오디오로 쓴다.
 
-## 곡 목록
+## 곡 목록 — 클론 직후 이대로 만들면 골든셋이 선다
 
-| 곡 | 정답 | 오디오 | 왜 이 곡인가 |
-|---|---|---|---|
-| Queen — Another One Bites the Dust | `songsterr_queen_aobtd.json` (98마디) | [rY0WxgSXdEE](https://www.youtube.com/watch?v=rY0WxgSXdEE) 공식 뮤비 **(음원이 악보보다 +1반음)** | **베이스가 곡의 주역**이고 리프가 명확하다. 8분 중심. 우리가 가장 잘해야 하는 유형 |
-| Jamiroquai — Virtual Insanity | `songsterr_jamiroquai_virtual_insanity.json` (130마디) | [b9Y4TACmvE8](https://www.youtube.com/watch?v=b9Y4TACmvE8) 공식 Visualiser(앨범 5:41) — **MV(4JkIs37a2JE)는 축약 편집판이라 쓰면 안 된다**(2026-08-08 발견, 구간이 잘려 마디 정렬 불가) | **16비트 펑크, 난이도 5.** 우리가 가장 못하는 유형(고스트 노트·16분). CREPE가 이 곡에서 붕괴해 엔진 폴백(engine_select)이 생겼다 |
-| The Beatles — Come Together | `songsterr_beatles_come_together.json` (89마디) | [l3SBBWIxGZA](https://www.youtube.com/watch?v=l3SBBWIxGZA) 2019 믹스 | **픽 연주, 구간이 잘게 나뉜다**(16섹션, 2~8마디). 구조 분할을 판정할 수 있는 첫 곡 |
-| WOODZ — Drowning (드라우닝) | `songsterr_woodz_drowning.json` (113마디) + 참조 악보 PNG(`Desktop\악보\드라우닝\`) | [NbKH4iZqq1Y](https://www.youtube.com/watch?v=NbKH4iZqq1Y) 공식 | **K-pop + 목표 악보 원곡.** akbobada 3단 악보(Lv2)와 Songsterr(원곡 난이도) 정답이 둘 다 있는 유일한 곡 — 하향 품질을 처음으로 정답 대조할 수 있다 |
-| DAY6 — 예뻤어 (You Were Beautiful) | `songsterr_day6_ywb.json` (98마디, 원곡) · `songsterr_day6_ywb_encover.json` (99마디, 뷰 많음) + 참조 악보 PNG(`Desktop\악보\예뻤어\`) | [BS7tz2rAOSA](https://www.youtube.com/watch?v=BS7tz2rAOSA) 공식 MV | **하드 케이스**: 셋잇단·고스트노트(×)·D.S. 반복 — 셋잇단 격자 경로 실전 첫 검증. Songsterr 원곡판(4뷰)은 신뢰도 낮음 — 두 판 대조 후 채택 |
+`data/`는 gitignore라 **저장소에는 산출물이 없다.** 아래 명령을 순서대로 돌리면
+`eval/run_goldenset.py`가 읽는 9행이 전부 만들어진다. 곡당 8~15분(CPU).
+
+```bash
+P=.venv/Scripts/python.exe
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=rY0WxgSXdEE   # Queen
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=b9Y4TACmvE8   # Virtual Insanity
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=l3SBBWIxGZA   # Come Together
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=NbKH4iZqq1Y   # Drowning
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=BS7tz2rAOSA   # 예뻤어
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=zaHO35c0NPk   # Highway to Hell
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=mLU3XOaraqs   # HTH 커버(F2E)
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=Kr4EQDVETuA   # Billie Jean
+# Champagne 커버 영상만 --cover-overlay를 준다 (아래 표 참조)
+$P scripts/run_pipeline.py https://www.youtube.com/watch?v=AYKkRsrEpX8 --cover-overlay
+$P eval/run_goldenset.py
+```
+
+**`--cover-overlay`는 Champagne에만 준다.** 원곡 음원을 반주로 틀고 그 위에
+연주한 영상이라 베이스가 둘 섞여 있고, 화면 악보 정답은 큰 쪽(커버 연주)을
+가리킨다. 스튜디오 원곡에 이 플래그를 주면 멀쩡한 음을 버려서 타현 정확도가
+곡마다 10~32pp 떨어진다(실측).
+
+| 곡 | 해시 | 유튜브 | 정답 | 왜 이 곡인가 |
+|---|---|---|---|---|
+| Queen — Another One Bites the Dust | `528aa2e6986aa42a` | [rY0WxgSXdEE](https://www.youtube.com/watch?v=rY0WxgSXdEE) 공식 뮤비 **(음원이 악보보다 +1반음)** | `songsterr_queen_aobtd.json` (98마디) | **베이스가 곡의 주역**이고 리프가 명확하다. 8분 중심. 우리가 가장 잘해야 하는 유형 |
+| Jamiroquai — Virtual Insanity | `d4fd7b689b9db1bb` | [b9Y4TACmvE8](https://www.youtube.com/watch?v=b9Y4TACmvE8) 공식 Visualiser(앨범 5:41) — **MV(4JkIs37a2JE)는 축약 편집판이라 쓰면 안 된다** | `songsterr_jamiroquai_virtual_insanity.json` (130마디) | **16비트 펑크, 난이도 5.** 우리가 가장 못하는 유형. CREPE가 붕괴해 엔진 폴백(engine_select)이 생겼다 |
+| The Beatles — Come Together | `78d6e3fc12388629` | [l3SBBWIxGZA](https://www.youtube.com/watch?v=l3SBBWIxGZA) 2019 믹스 | `songsterr_beatles_come_together.json` (89마디) | **픽 연주, 구간이 잘게 나뉜다**(16섹션, 2~8마디). 구조 분할을 판정할 수 있는 첫 곡 |
+| WOODZ — Drowning | `65ef1cf020561a5c` | [NbKH4iZqq1Y](https://www.youtube.com/watch?v=NbKH4iZqq1Y) 공식 | `songsterr_woodz_drowning.json` (113마디) + 참조 악보 PNG(저장소 밖) | **K-pop + 목표 악보 원곡.** akbobada 3단 악보(Lv2)와 Songsterr 정답이 둘 다 있는 유일한 곡 |
+| DAY6 — 예뻤어 | `8181e1aa7d7a0be1` | [BS7tz2rAOSA](https://www.youtube.com/watch?v=BS7tz2rAOSA) 공식 MV | `songsterr_day6_ywb.json` (98마디) · `..._encover.json` (99마디) | **하드 케이스**: 셋잇단·고스트노트·D.S. 반복. 셋잇단 격자 경로 실전 검증 |
+| AC/DC — Highway to Hell | `a7b3735a1e06ccde` | [zaHO35c0NPk](https://www.youtube.com/watch?v=zaHO35c0NPk) 스튜디오 원곡(튜닝 편차 −5센트, 변조 없음) | `songsterr_acdc_hth_estandard.json` (표준튜닝, **자리 비교 가능**) · `songsterr_acdc_hth_bass.json` (E♭탭, 이조 탐색 시험용) | **개방현 중심 록.** 자리 정답 45마디 중 39가 개방현이라 운지 가중치가 여기서 갈린다 |
+| AC/DC — HTH 커버 (First To Eleven) | `2c80d86eb66dd69a` | [mLU3XOaraqs](https://www.youtube.com/watch?v=mLU3XOaraqs) | `songsterr_acdc_hth_bass.json` | 같은 곡 다른 녹음(원곡 −1반음). **정답 탭이 E♭튜닝이라 자리 비교는 성립하지 않는다**(`n/a`) |
+| Michael Jackson — Billie Jean | `752cc5fcb58d957a` | [Kr4EQDVETuA](https://www.youtube.com/watch?v=Kr4EQDVETuA) | `songsterr_mj_billie_jean.json` (144마디) | **표준튜닝 + 144마디 중 142마디에 베이스.** 자리 대조 표본이 가장 크다 |
+| Oasis/백예린 — Champagne Supernova (커버 영상) | `975e4e588d282666` | [AYKkRsrEpX8](https://www.youtube.com/watch?v=AYKkRsrEpX8) **`--cover-overlay` 필수** | `champagne_video_bars25_40.json` · `champagne_video_bars41_99.json` (화면 TAB) | **실사용 하드 케이스** — 원곡 반주 위 커버 연주. 화면 악보라 정답과 오디오가 같은 녹음이다 |
 
 **리마스터·리믹스는 같은 연주다.** 2011 리마스터와 2019 믹스는 같은 테이프에서
-나온 것이므로 마디 구조와 연주 내용이 채보와 일치한다. 라이브 버전은 쓸 수 없다 —
-Songsterr가 라이브를 별도 항목으로 두는 이유가 그것이다(`(Live At The Budokan 1998)`).
+나온 것이므로 마디 구조와 연주 내용이 채보와 일치한다. 라이브 버전은 쓸 수 없다.
+
+**같은 곡에 Songsterr 탭이 여럿이고 튜닝이 다르다.** 탭을 받을 때 `tuning`을
+먼저 확인해라 — 튜닝이 다르면 같은 음도 프렛 번호가 통째로 달라져 자리 비교가
+성립하지 않는다. `eval_songsterr.comparable_tuning`이 그런 정답을 `n/a`로 뺀다.
+빼지 않으면 0%로 찍혀 "우리가 다 틀렸다"로 읽힌다(실제로 그랬다).
+
+## 기준선 (2026-08-11, 전곡 현재 코드로 재생성 후)
+
+| 곡 | 피치클래스 | 자리 | 타현 |
+|---|---|---|---|
+| 예뻤어 | 98% | 60% | 49% |
+| Champagne(커버영상) | 94% | n/a | 3% |
+| Come Together | 89% | 14% | 36% |
+| Highway to Hell | 87% | 70% | 20% |
+| Drowning | 81% | 63% | 83% |
+| Queen | 66% | n/a | 18% |
+| Virtual Insanity | 25% | 14% | 15% |
+
+**피치클래스가 3pp 이상 떨어지면 회귀다.** 자리는 운지 가중치를 건드렸을 때만
+움직이고, `eval/eval_fretting.py --sweep-songs`가 이 목록을 그대로 쓴다.
 
 ## 성격이 갈리는 것이 요점이다
 

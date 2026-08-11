@@ -3,6 +3,19 @@
 이 파일 하나만 읽고 바로 작업을 시작할 수 있게 만든 것이다.
 배경이 필요하면 `HANDOFF.md` → `NEXT.md` 순서로 간다.
 
+## 무엇을 할지는 GitHub 이슈에 있다
+
+각 이슈에 증상·재현 명령·이미 진 시도·완료 기준이 자기완결로 들어 있다.
+
+| # | 과업 |
+|---|---|
+| [#1](https://github.com/Moondalgu/base/issues/1) | **채보 누락** — HTH 타현 20%(마디당 3.2음, 필요 8음). VI 25%와 같은 뿌리 |
+| [#2](https://github.com/Moondalgu/base/issues/2) | **음량 게이트 존재 이유 판정** — 통제 실험 준비 완료, 실행만 남음 |
+| [#3](https://github.com/Moondalgu/base/issues/3) | 운지 가중치 되돌리기(HTH 우선순위 종료 후). 상수를 세 번 잘못 정한 경위 포함 |
+
+**클론 직후에는 `data/`가 비어 있다.** `eval/golden/SET.md`의 명령을 그대로
+돌리면 골든셋 9행이 만들어진다(곡당 8~15분).
+
 ## 전체 점검을 하려면 — **"베이스 서비스 읽어줘"**
 
 그 말을 하면 `lowend-review` 스킬이 뜬다(`.claude/skills/lowend-review/`).
