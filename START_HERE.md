@@ -39,22 +39,15 @@
 
 ## 0. 환경 확인 (2분)
 
-```bash
-cd C:/Users/admin/Desktop/lowend
-git log --oneline -1        # 9e5e8d4 docs: 점검 스킬을 지시 대신 판단 중심으로 다시 씀
-git branch --show-current   # master
-```
-
 **`data/`는 gitignore이므로 산출물이 없으면 다시 만들어야 한다.** 확인:
 
 ```bash
-ls data/975e4e588d282666/manifest.json   # 커버 영상 (정답 59마디)
-ls data/528aa2e6986aa42a/manifest.json   # Queen
-ls data/78d6e3fc12388629/manifest.json   # Come Together
-ls data/c54d965e0a8fda45/manifest.json   # Virtual Insanity
+.venv/Scripts/python.exe eval/run_goldenset.py   # "데이터 없음" 행이 만들 것들이다
 ```
 
-없으면 `eval/golden/SET.md`의 URL로 `scripts/run_pipeline.py`를 돌린다(곡당 8~11분).
+`eval/golden/SET.md`에 9곡 전부의 유튜브 id·해시와 그대로 붙여넣는 명령이 있다
+(곡당 8~15분). **`--cover-overlay`는 Champagne 하나뿐이다** — 스튜디오 원곡에
+주면 멀쩡한 음을 버려 타현 정확도가 10~32pp 떨어진다.
 
 ## 1. 현재 점수 재현 (5분)
 
@@ -76,40 +69,17 @@ ls data/c54d965e0a8fda45/manifest.json   # Virtual Insanity
 
 ---
 
-## 2. 오늘 할 일 — 하나만 고르면 이것
+## 2. 오늘 할 일
 
-### 배음을 기음으로 잡는 것 (`pipeline/transcribe_crepe.py`)
+**맨 위 이슈 표를 본다.** 각 이슈가 자기완결이라 여기 옮겨 적지 않는다 —
+두 곳에 적으면 한 곳이 낡는다.
 
-> 앞 세션 1순위였던 **연습영상 오판은 고쳤다**(아래 "직전에 고친 것" 참조).
+앞 세션의 1순위였던 두 가지는 닫혔다.
 
-**증상**: Come Together에서 박자 4/4 ✓, 마디 89/89 ✓, BPM 83.3 ✓로 **시간축은
-정확한데 음이 틀린다.** 최적 이조가 +7반음(완전5도), 상관 0.727 / 0반음 0.642로
-애매하다 — 일정한 이조가 아니라 **일부 음에서 3배음을 f0로 잡는** 모습이다.
-
-**왜 그런가**: 리켄배커 + 피크 연주는 기음보다 배음이 강하게 녹음되는 전형적
-경우다. CREPE는 단선율이라 배음을 별도 음으로 만들지 않지만, **기음보다 배음이
-강하면 그쪽을 f0로 고른다.** `bassclean`의 배음 제거는 CREPE 경로에서 꺼져
-있다(다성 모델용이라 걸러낼 대상이 없다고 판단했는데, 이 경우는 다르다).
-
-**확인 명령**:
-
-```bash
-.venv/Scripts/python.exe eval/eval_songsterr.py data/78d6e3fc12388629     eval/golden/songsterr_beatles_come_together.json
-# 기대(현재): +7반음 이조, 음 19/68 (28%)
-```
-
-**방향**: f0 후보의 1/2·1/3 지점 에너지를 확인해 기음을 되찾는다. `fmax=500`을
-낮추는 것도 후보지만 슬랩 고음을 잃는다 — 재고 정한다.
-
-**주의**: 고친 뒤 **IDMT와 골든셋을 둘 다** 돌려라. IDMT는 베이스 단독 클린
-녹음이라 이 문제가 없어서, IDMT만 보면 "변화 없음"으로 보이고 실곡에서만
-갈린다.
-
-### 그다음 (순서대로)
-
-2. **16비트 붕괴** — Virtual Insanity. 박자 3/4 오검출부터 규명
-3. **A-B 루프 + 메트로놈** — 정확도와 무관하게 값이 있다. 없으면 연습 도구가 아니다
-4. `POLICY.md` 4장 추측(위험) 6건 중 하나 재기
+- **배음을 기음으로 잡는 문제** — 가설이 기각됐다(f/2·f/3 에너지 0%). Come
+  Together가 28%였던 것은 배음이 아니라 ①측정 도구가 이조를 못 찾은 것과
+  ②음량 게이트였다. 게이트를 끄고 산출물을 다시 만들자 **피치 89% / 타현 36%**.
+- **운지 자리 4%** — 원인 셋을 갈라 70%로 올렸다(`NEXT.md` 'A-1 종결').
 
 ## 직전에 고친 것 — 연습영상 오판 (2026-08-07)
 
