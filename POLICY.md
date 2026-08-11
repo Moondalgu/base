@@ -28,10 +28,11 @@ Gemini(세션 베이시스트·MIR 연구자 관점)와 교차 검토했고, **�
 
 | 상수 | 값 | 근거 | 재현 |
 |---|---|---|---|
-| `fretting.W_MOVE` | 0.2 | IDMT 77.8% / 영상 100%. IDMT만으로 튜닝하면 모든 음이 E현에 갇힌다 | `eval/eval_fretting.py --sweep` |
+| `fretting.W_MOVE` | 0.2 | IDMT 홀드아웃. IDMT만으로 튜닝하면 모든 음이 E현에 갇힌다 | `eval/eval_fretting.py --sweep` |
 | `fretting.W_STRING_CHANGE` | 0.2 | 같은 스윕 | 〃 |
-| `fretting.W_POSITION` | 0.03 | 같은 스윕 | 〃 |
-| `fretting.W_OPEN_PENALTY` | 0.4 | 같은 스윕. **보너스에서 벌점으로 부호가 뒤집혔다** | 〃 |
+| `fretting.W_POSITION` | 0.03 | 같은 스윕. 0.08 이상이면 어떤 open/thin 조합이든 실곡이 붕괴한다 | `--sweep-songs` |
+| `fretting.W_OPEN_PENALTY` | 0.1 | 자리 정답 **전부**(실곡 445마디 + IDMT 948음)로 재측정. 앞서 두 번은 정답 일부만 보고 정해 매번 다른 곡을 무너뜨렸다(0.4→HTH 9%, 0.0→Champagne 25%) | `eval/eval_fretting.py --sweep-songs` |
+| `fretting.W_THIN_STRING` | 0.0 | 근거 없이 0.15로 들어와 Champagne 영상 악보를 100%→25%로 무너뜨리고 있었다. 굵은 현 선호는 W_POSITION이 이미 만든다 | 〃 |
 | `bassclean.GATE_TARGET_GRID_RATIO` | 0.95 | 정상 곡 오발동 6/17(35%) → 2/17(12%). **IDMT 정답 온셋 기준** | 아래 "게이트 재측정" |
 | `diagnose.TRUSTED_GRID_RATIO` | 0.85 | **우리 검출 온셋 기준.** 격자정렬↔타현정확도 상관 0.861, 0.875(63%)와 0.777(7%) 사이에서 갈린다 | `eval_songsterr.py` + `eval_video_bars.py`로 표 재작성 |
 | `bassclean.GATE_GRID_DIVISORS` | (4,3,6) | 스윙 곡을 16분 격자로만 재면 정상 연주가 어긋나 보인다 | 〃 |
@@ -230,7 +231,7 @@ Gemini 판정 중 코드를 확인해 보니 사실과 다른 것들이다. 같�
 | 상수 | 값 | 등급 | 근거 · 재는 법 |
 |---|---|---|---|
 | `eval_songsterr.MIN_TRANSPOSE_MARGIN` | 0.3 | 실측 | 진짜 이조(Queen) 마진 1.097 vs 가짜(CT) 0.085 — 사이 어디든 됨. 새 골든셋 곡에서 마진 분포 재확인 |
-| `engine_select.MIN_COVERAGE` | 0.35 | 실측 | 붕괴(VI 0.27)와 차하위(CT 0.44) 사이. 골든셋 A/B로만 확대 |
+| `engine_select.MIN_COVERAGE` | 0.45 | 실측(불안정) | CT 0.44(+11pp)와 Queen 0.47(−2pp) **사이 3pp뿐인 경계**. 새 곡으로만 재조정 |
 | `engine_select.ACTIVE_RMS` | 0.02 | 차용 | diag 계열과 동일 기준 유지(일관성 목적) |
 | `transcribe_crepe.VOCAL_MIN_SEC` | 0.10 | 추측(무해) | 음절이 이보다 짧기 어려움. 가사 정렬 실패 사례가 생기면 재측정 |
 | `transcribe_crepe.VOCAL_MIN_CONFIDENCE` | 0.65 | 추측(무해) | regen_vocal 초기값 승계. 보컬 정답이 생기면 재측정 |

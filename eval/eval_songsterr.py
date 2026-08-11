@@ -72,7 +72,20 @@ OFFSET_RANGE = range(-8, 9)
 MIN_TRANSPOSE_MARGIN = 0.3
 
 
-TUNING = [43, 38, 33, 28]      # 1현~4현. Songsterr와 우리가 같다.
+TUNING = [43, 38, 33, 28]      # 1현~4현. 우리 standard.
+
+
+def comparable_tuning(golden: dict) -> bool:
+    """이 정답으로 **자리(현·프렛)**를 비교할 수 있는가.
+
+    Songsterr에는 같은 곡 탭이 여럿이고 튜닝이 다르다. 튜닝이 다르면 같은 음도
+    프렛 번호가 통째로 달라지므로 자리 비교가 성립하지 않는다 — 그런데 이
+    도구는 튜닝을 안 보고 비교해서 **일치 0%를 "우리가 다 틀렸다"로 보고했다**
+    (HTH 커버 0/47, 정답은 E♭탭 [42,37,32,27]). 피치클래스는 여전히 유효하다.
+
+    튜닝이 안 적힌 옛 정답 파일은 우리 standard로 본다.
+    """
+    return list(golden.get("tuning") or TUNING) == TUNING
 
 
 def pitch_of(string: int, fret: int) -> int:
@@ -117,7 +130,8 @@ def find_transpose(ours: dict, golden: list[dict]) -> tuple[int, float]:
 
 
 def score_at(
-    ours: dict, golden: list[dict], offset: int, transpose: int = 0
+    ours: dict, golden: list[dict], offset: int, transpose: int = 0,
+    *, compare_place: bool = True,
 ) -> tuple[int, int, int, int]:
     """오프셋·이조를 적용해 (자리 일치, 피치클래스 일치, 타현 일치, 비교 마디 수).
 
@@ -139,7 +153,7 @@ def score_at(
             main = max(set(places), key=places.count)
             want = (row["pitch"] + transpose) % 12
             pc += pitch_of(*main) % 12 == want
-            if not transpose:
+            if not transpose and compare_place:
                 place += main == (row["string"], row["fret"])
         attack += len(places) == row["attacks"]
     return place, pc, attack, compared
@@ -159,6 +173,7 @@ def main() -> int:
 
     ours = our_bars(tex, manifest.get("subdivision", 4))
     played = [b for b in bars if b.get("string") is not None]
+    place_ok = comparable_tuning(golden)
 
     print(f"=== {args.golden.name} ===")
     print(f"정답 {len(bars)}마디 (연주 {len(played)}마디) / 우리 {len(ours)}마디")
@@ -169,6 +184,9 @@ def main() -> int:
         print("   자리 비교를 피치클래스 비교로 바꾼다 — 이조되면 짚는 자리가 달라진다")
     else:
         print(f"이조 차이 없음 (피치클래스 상관 {quality:.3f})")
+    if not place_ok:
+        print(f"**정답 탭 튜닝 {golden['tuning']} ≠ 우리 {TUNING}** — 자리 비교를 건너뛴다")
+        print("   같은 음도 프렛 번호가 통째로 달라진다. 피치클래스는 유효하다")
 
     if args.offset is not None:
         offset = args.offset
@@ -179,23 +197,28 @@ def main() -> int:
         best = max(
             OFFSET_RANGE,
             key=lambda o: (lambda r: (r[1], r[3]))(
-                score_at(ours, bars, o, transpose)
+                score_at(ours, bars, o, transpose, compare_place=place_ok)
             ),
         )
         offset = best
-        scores = [(o,) + score_at(ours, bars, o, transpose) for o in OFFSET_RANGE]
+        scores = [
+            (o,) + score_at(ours, bars, o, transpose, compare_place=place_ok)
+            for o in OFFSET_RANGE
+        ]
         top = sorted(scores, key=lambda s: -s[2])[:3]
         print("최적 마디 오프셋 탐색 (피치클래스 일치 기준):")
         for o, p, q, a, c in top:
             print(f"  오프셋 {o:+3d}: 자리 {p:3}/{c:<3} 피치클래스 {q:3}/{c:<3} 타현 {a:3}/{c}")
 
-    place, pc, attack, compared = score_at(ours, bars, offset, transpose)
+    place, pc, attack, compared = score_at(
+        ours, bars, offset, transpose, compare_place=place_ok
+    )
     if not compared:
         print("\n[실패] 비교할 마디가 없다. 마디 수나 오프셋을 확인하라.")
         return 1
 
     print(f"\n오프셋 {offset:+d} 적용")
-    if not transpose:
+    if not transpose and place_ok:
         print(f"  자리(현·프렛) {place}/{compared} ({place / compared:.0%})")
     print(f"  피치클래스    {pc}/{compared} ({pc / compared:.0%})")
     print(f"  타현 수       {attack}/{compared} ({attack / compared:.0%})")

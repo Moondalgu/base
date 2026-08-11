@@ -48,11 +48,14 @@ ls data/c54d965e0a8fda45/manifest.json   # Virtual Insanity
 ```bash
 .venv/Scripts/python.exe eval/eval_video_bars.py data/975e4e588d282666 \
     eval/golden/champagne_video_bars41_99.json
-# 기대: 자리 40/43 (93%)  타현수 27/43 (63%)
+# 기대: 자리 36/43 (84%)  타현수 27/43 (63%)
 
 .venv/Scripts/python.exe eval/eval_songsterr.py data/528aa2e6986aa42a \
     eval/golden/songsterr_queen_aobtd.json
-# 기대: +1반음 이조, 음 47/76 (62%), 타현 3/76 (4%)
+# 기대: +1반음 이조, 음 50/76 (66%), 타현 14/76 (18%)
+
+# 전곡을 한 번에 (자리 비교가 성립하지 않는 곡은 n/a로 빠진다)
+.venv/Scripts/python.exe eval/run_goldenset.py
 ```
 
 숫자가 다르면 **파이프라인이 아니라 산출물이 낡은 것**일 수 있다.
@@ -152,7 +155,7 @@ H=975e4e588d282666
 cd apps/web && npm run build
 ```
 
-기준선: 정답 59마디에서 **자리 93% / 타현 63%**, 나머지 전부 실패 0건.
+기준선: 정답 43마디에서 **자리 84% / 타현 63%**, 나머지 전부 실패 0건.
 
 ---
 

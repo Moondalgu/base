@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "worker"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from eval_songsterr import find_transpose, score_at, OFFSET_RANGE  # noqa: E402
+from eval_songsterr import (  # noqa: E402
+    OFFSET_RANGE, comparable_tuning, find_transpose, score_at,
+)
 from eval_video_bars import our_bars  # noqa: E402
 
 # (이름, data 해시, 정답 파일). SET.md의 곡 목록과 일치해야 한다.
@@ -56,18 +58,25 @@ def eval_one(workdir: Path, golden_path: Path, tex: str | None = None) -> dict |
 
     ours = our_bars(tex, manifest.get("subdivision", 4))
     transpose, corr = find_transpose(ours, bars)
+    # 정답 탭 튜닝이 우리와 다르면 자리 비교가 성립하지 않는다. 그대로 재면
+    # 0%가 나오고 "우리가 다 틀렸다"로 읽힌다 (HTH 커버 0/47이 그랬다).
+    place_ok = comparable_tuning(golden)
     offset = max(
         OFFSET_RANGE,
-        key=lambda o: (lambda r: (r[1], r[3]))(score_at(ours, bars, o, transpose)),
+        key=lambda o: (lambda r: (r[1], r[3]))(
+            score_at(ours, bars, o, transpose, compare_place=place_ok)
+        ),
     )
-    place, pc, attack, compared = score_at(ours, bars, offset, transpose)
+    place, pc, attack, compared = score_at(
+        ours, bars, offset, transpose, compare_place=place_ok
+    )
     if not compared:
         return None
     return {
         "transpose": transpose,
         "corr": corr,
         "offset": offset,
-        "place": place / compared,
+        "place": (place / compared) if place_ok and not transpose else None,
         "pc": pc / compared,
         "attack": attack / compared,
         "compared": compared,
@@ -109,7 +118,7 @@ def main() -> int:
             continue
         print(
             f"{name:<20} {r['transpose']:>+4d} {r['offset']:>+4d} "
-            f"{r['pc']:>7.0%} {r['place']:>6.0%} {r['attack']:>6.0%} "
+            f"{r['pc']:>7.0%} {'  n/a' if r['place'] is None else format(r['place'], '>6.0%')} {r['attack']:>6.0%} "
             f"{r['compared']:>5} {r['engine']:>12}"
         )
     return 0
